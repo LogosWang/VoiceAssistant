@@ -1,0 +1,79 @@
+# VoiceInput server config
+
+[wake]
+# Shown in logs; also what gets stripped from the start of the transcript.
+name = "Carnot"
+# Every way you might say it. Chinese: write the characters. English: CMU phones
+# (see models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/en.phone for examples).
+# Tested: "car-NO", "car-NOT" (English TTS voices) and Chinese "卡诺" all wake it.
+pronunciations = ["K AA1 R N OW1", "K AA1 R N AA1 T", "K AA1 R N AH0 T", "卡诺"]
+# How the speech recognizer may spell the name, so it can be removed before going to Claude.
+asr_aliases = ["Car not", "Car no", "Carno", "Karno", "卡诺", "卡洛", "卡罗"]
+# Higher = harder to trigger. Raise if it wakes on its own, lower if it misses you.
+threshold = 0.20
+# Bias towards the keyword (1.0-3.0). Higher = easier to trigger.
+score = 1.5
+# Search width; the default 4 misses some pronunciations when several are listed.
+max_active_paths = 16
+# Allow interrupting a spoken reply by saying the wake name.
+barge_in = true
+
+[record]
+# Stop recording after this much silence once you started talking.
+end_silence = 1.0
+# Give up if you don't start talking within this many seconds after waking.
+start_timeout = 6.0
+max_seconds = 30.0
+# After a reply finishes, keep listening this long so you can answer without the wake word.
+follow_up = true
+follow_up_window = 6.0
+# Extra software gain applied to the incoming audio (1.0 = none).
+gain = 1.0
+
+[claude]
+# Claude Code runs here (as if you had started `claude` in this directory).
+workdir = "~"
+# Extra directories Claude may touch.
+add_dirs = []
+# "bypassPermissions" = never asks, needed to finish tasks unattended.
+# "auto" = auto-approves routine actions but blocks risky ones (those then fail instead of asking).
+permission_mode = "bypassPermissions"
+# Empty = whatever ~/.claude/settings.json says.
+model = "claude-opus-5-5"
+# Continue the same conversation across commands (say "新对话" to start over).
+keep_session = true
+
+[tts]
+# "edge" = Microsoft neural voices (natural, needs internet; reply text is sent to Microsoft)
+# "say"  = macOS built-in voice (offline). edge falls back to say automatically when offline.
+engine = "edge"
+# Others: zh-CN-YunxiNeural (male, lively), zh-CN-XiaoyiNeural (female, lively),
+# zh-CN-YunyangNeural (male, news anchor). Full list: .venv/bin/edge-tts --list-voices
+edge_voice = "zh-CN-XiaoxiaoNeural"
+edge_rate = "+10%"
+say_voice = "Tingting"
+say_rate = 220
+
+[vision]
+# Say "打开摄像头" / "关闭摄像头", "看屏幕" / "停止看屏幕". While on, each command carries a snapshot.
+# Camera name or index from: ffmpeg -f avfoundation -list_devices true -i ""  (needs brew install ffmpeg)
+camera = "0"
+camera_fps = 30
+# 1 = main display
+screen_display = 1
+
+[aec]
+# Echo cancellation: subtracts everything the Mac plays (Carnot's voice, music, videos) from the mic,
+# so you can talk over it and playback is never taken for a command. Captures system audio with
+# ScreenCaptureKit (Screen Recording permission); output devices and playback are left untouched.
+enabled = true
+# Longest echo path it can learn (delay + room reverb), in ms.
+tail_ms = 400
+
+[mic]
+# Part of the input device's name, e.g. "USB" (empty = system default input).
+device = ""
+
+[network]
+audio_port = 50005
+discovery_port = 50006
