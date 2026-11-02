@@ -53,6 +53,14 @@ To test without acting on anything: `/Applications/Carnot.app/Contents/MacOS/Car
 
 AIs and API keys are in the app's connection settings (button on the left of the input box), or the extension's `Carnot: 连接设置`. The extension chooses separately, in its chat view (`carnot.permissionMode`), and has no approval prompt: actions needing approval fail.
 
+## Sessions and remote bots
+
+- The menu-bar icon has 会话 (new, continue, rename, delete), stored in `~/.carnot/sessions.json`. Only titles and each CLI's session id are kept. VS Code chats are separate.
+- 远程机器人… manages Telegram and Feishu bots (`server/bots.py`, config in `~/.carnot/bots.json`, tokens in the keychain, received files in `~/.carnot/inbox`).
+- A reply line `[发送文件：path]` sends that file to the chat. `blocked_reason` in `bots.py` refuses keys and credentials on the real path. It only covers uploads: what the AI reads can still reach its text reply.
+- Don't weaken these: a sender must pair with a code shown on the Mac; private chats only; at most `auto`, never bypass; replies aren't spoken and content isn't shown on screen; tokens and message content stay out of the log.
+- Feishu needs a self-built enterprise app, the long-connection event subscription and the `im.message.receive_v1` event. Stopping one only ignores messages until a restart: the SDK can't close its connection.
+
 ## Memory and skills
 
 - `~/.carnot/memory`: `MEMORY.md` index plus one file per fact, handed to the AI in use every turn. Includes the persona and `knowledge/`. It stays on this Mac; memory isn't synced between machines.

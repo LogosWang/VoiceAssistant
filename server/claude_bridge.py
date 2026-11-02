@@ -10,6 +10,7 @@ import time
 import agent_core
 import events
 import providers
+import sessions
 from tts import SentenceSplitter
 
 SYSTEM_PROMPT = """你正在通过语音与用户交互：用户的指令来自语音识别，可能有同音错字，请结合上下文理解。你输出的所有文字都会被 TTS 朗读出来。
@@ -23,13 +24,6 @@ SYSTEM_PROMPT = """你正在通过语音与用户交互：用户的指令来自�
 7. 消息末尾的 [附件文件：路径] 或 [附件文件夹：路径] 是用户附加的内容，先读取它们再回答。"""
 
 LOGIN_TIMEOUT = 600  # seconds to finish signing in, in the browser
-HERE = os.path.dirname(os.path.abspath(__file__))
-
-
-def session_file(pid):
-    return os.path.join(HERE, ".claude_session" if pid == "claude" else f".session_{pid}")
-
-
 class ClaudeBridge:
     """Runs commands one at a time through the selected provider's CLI, and speaks the reply."""
 
@@ -40,6 +34,7 @@ class ClaudeBridge:
         self.log = log
         self.workdir = os.path.expanduser(cfg["workdir"])
         self.provider = providers.current()
+        self.conversation = sessions.current()
         self.session_id = self._load_session()
         self._q = queue.Queue()
         self._proc = None  # a login in progress
@@ -57,12 +52,10 @@ class ClaudeBridge:
         return providers.PROVIDERS[self.provider]["name"]
 
     def _load_session(self):
-        path = session_file(self.provider)
-        if self.cfg.get("keep_session", True) and os.path.exists(path):
-            return open(path).read().strip() or None
-        return None
+        return sessions.native(self.conversation, self.provider) if self.cfg.get("keep_session", True) else None
 
     def submit(self, text, dirs=()):
+        sessions.touch(self.conversation, text)
         self._q.put((text, list(dirs)))
         self.on_change()
 
@@ -82,10 +75,18 @@ class ClaudeBridge:
         self.on_change()
 
     def new_session(self):
+        self.use_session(sessions.create(make_current=True))
+
+    def use_session(self, sid):
+        """From the next command on; one that is running finishes in the conversation it started in."""
+        if sessions.set_current(sid):
+            self.conversation = sid
+            self.session_id = self._load_session()
+            self.log(f"[session] now in {sid}")
+
+    def _forget_native(self):
         self.session_id = None
-        path = session_file(self.provider)
-        if os.path.exists(path):
-            os.remove(path)
+        sessions.set_native(self.conversation, self.provider, None)
 
     def switch(self, pid):
         """Takes effect on the next command; a running one finishes on the old service."""
@@ -135,13 +136,13 @@ class ClaudeBridge:
                 self.session_id = before
                 self._save_session(before)
             else:
-                self.new_session()
+                self._forget_native()
             if retried:
                 self.speaker.say(f"登录之后 {self.name} 还是连不上，详情请看日志")
             elif self._login():
                 return self._run(text, dirs, retried=True)
         elif status == "no_conversation":
-            self.new_session()
+            self._forget_native()
             return self._run(text, dirs)
         elif status == "failed":
             self.log(f"[{pid}] failed, {detail}")
@@ -220,5 +221,4 @@ class ClaudeBridge:
         if not sid or not self.cfg.get("keep_session", True):
             return
         self.session_id = sid
-        with open(session_file(self.provider), "w") as f:
-            f.write(sid)
+        sessions.set_native(self.conversation, self.provider, sid)

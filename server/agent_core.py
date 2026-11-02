@@ -56,7 +56,7 @@ class Agent:
                 cmd += ["-c", 'sandbox_mode="%s"' % ("read-only" if mode == "plan" else "workspace-write")]
                 if mode != "plan":
                     cmd += ["-c", "sandbox_workspace_write.writable_roots=" + json.dumps(dirs)]
-                if mode == "auto":
+                if mode == "auto" and not sid:  # a resumed session doesn't take this flag
                     cmd.append("--approve-for-me")
             return cmd + ["-"]
         if p["engine"] == "gemini":

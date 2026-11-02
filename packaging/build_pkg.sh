@@ -17,7 +17,7 @@ step() { printf '\n==> %s\n' "$1"; }
 rm -rf "$STAGE"; mkdir -p "$CACHE" "$SERVER" "$STAGE/root/Applications" "$ROOT/dist"
 
 step "Service code"
-cp server/*.py server/persona.md server/config.toml server/requirements.txt "$SERVER/"
+cp server/*.py server/persona.md server/portrait.png server/config.toml server/requirements.txt "$SERVER/"
 cp -R server/knowledge server/test_clips "$SERVER/"
 
 step "Python $PY_VER, relocatable"

@@ -30,12 +30,37 @@ button.quiet{border-color:#57503f;color:var(--dim)}
 #permConfirm{display:none;margin-top:8px;padding:8px 10px;border:1px solid #a8505f;border-radius:2px;background:#2a1519;font-size:12.5px}
 #permConfirm.on{display:block}
 #permConfirm div{margin-top:7px;display:flex;gap:6px}
+#bots{background:var(--row);border:1px solid rgba(196,154,82,.45);border-radius:3px;padding:10px 12px;margin-bottom:12px}
+#bots h2{font-size:15px;font-weight:600;margin:0 0 3px}
+#bots .hint{color:var(--dim);font-size:12px;margin:0 0 8px}
+.bot{border-top:1px solid rgba(196,154,82,.25);padding:8px 0}
+.bot .head{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.bot .kind{font-size:12px;color:var(--dim)}
+.bot select{background:#100f13;color:var(--ink);border:1px solid #57503f;border-radius:2px;padding:3px 4px;font:13px "Songti SC","PingFang SC",serif}
+.bot .users{font-size:12.5px;margin:6px 0 2px;display:flex;flex-wrap:wrap;gap:5px;align-items:center}
+.bot .user{display:flex;gap:4px;align-items:center;border:1px solid #57503f;border-radius:2px;padding:1px 3px 1px 7px}
+.bot .user b{cursor:pointer;font-weight:400;color:var(--brass);padding:0 3px}
+.bot .code{margin-top:6px;padding:6px 8px;border:1px solid var(--brass);border-radius:2px;font-size:13px}
+.bot .code strong{font:15px ui-monospace,Menlo,monospace;letter-spacing:1px;color:#e8cf9b;user-select:text;-webkit-user-select:text}
+#botForm{border-top:1px solid rgba(196,154,82,.25);padding-top:8px;display:flex;flex-direction:column;gap:6px}
+#botForm .line{display:flex;gap:6px;align-items:center}
+#botForm select{background:#100f13;color:var(--ink);border:1px solid #57503f;border-radius:2px;padding:4px;font:13px "Songti SC","PingFang SC",serif}
+#botHelp{color:var(--dim);font-size:12px;line-height:1.5}
 #msg{min-height:18px;color:#e8a06a;font-size:12.5px;margin-top:4px}
 </style></head><body><main>
 <h1>连接设置</h1>
 <p class="sub">选一家作为 Carnot 的大脑。API Key 只保存在这台 Mac 的钥匙串里。</p>
 <section id="perm"><h2>AI 的权限</h2><div class="modes" id="modes"></div><div id="permNote"></div>
 <div id="permConfirm">完全放行后，AI 可以不经确认执行任何操作，包括删除文件和对外发送内容；旁边任何人喊唤醒词，也能让它这样做。<div><button id="permYes" class="use">确认放行</button><button id="permNo" class="quiet">取消</button></div></div></section>
+<section id="bots"><h2>远程机器人</h2><p class="hint">用手机上的 Telegram 或飞书发文字、图片、文件和语音给 Carnot，也可以让它把电脑上的文件发给你。只接受配对过的人的私聊。电脑要开着，Carnot 要在运行。</p>
+<div id="botList"></div>
+<div id="botForm">
+  <div class="line"><select id="botKind"><option value="telegram">Telegram</option><option value="feishu">飞书</option></select><input id="botName" placeholder="名称（可不填）" autocomplete="off" spellcheck="false"></div>
+  <div class="line" id="tgLine"><input id="botToken" type="password" placeholder="粘贴 Bot Token" autocomplete="off" spellcheck="false"></div>
+  <div class="line" id="fsLine" style="display:none"><input id="botAppId" placeholder="App ID" autocomplete="off" spellcheck="false"><input id="botSecret" type="password" placeholder="App Secret" autocomplete="off" spellcheck="false"></div>
+  <div class="line"><button id="botAdd">添加机器人</button></div>
+  <div id="botHelp"></div>
+</div></section>
 <div id="list"></div><div id="msg"></div>
 </main>
 <script>
@@ -112,7 +137,67 @@ window.carnot = ev => {
     if (p.signed_in !== undefined && msg.textContent === "正在打开登录…" && p.signed_in) msg.textContent = "";
   }
 };
+// ---------- remote bots ----------
+const BOT_HELP = {
+  telegram: "在 Telegram 里找 @BotFather，发送 /newbot，把它给的 Token 贴到这里。Token 只保存在钥匙串里。",
+  feishu: "在飞书开放平台创建企业自建应用并启用机器人，开通发消息、读取和下载消息资源、上传图片和文件的权限，事件订阅选“使用长连接”，添加“接收消息”事件，再发布应用。App Secret 只保存在钥匙串里。",
+};
+const $b = id => document.getElementById(id);
+function botKind() {
+  const k = $b("botKind").value;
+  $b("tgLine").style.display = k === "telegram" ? "" : "none";
+  $b("fsLine").style.display = k === "feishu" ? "" : "none";
+  $b("botHelp").textContent = BOT_HELP[k];
+}
+$b("botKind").onchange = botKind; botKind();
+$b("botAdd").onclick = () => {
+  const k = $b("botKind").value;
+  server({type: "bot_add", kind: k, name: $b("botName").value, token: $b("botToken").value, app_id: $b("botAppId").value, secret: $b("botSecret").value});
+  for (const id of ["botName", "botToken", "botAppId", "botSecret"]) $b(id).value = "";
+};
+let removing = null;
+function drawBots(items) {
+  const box = $b("botList"); box.textContent = "";
+  for (const b of items) {
+    const row = document.createElement("div"); row.className = "bot";
+    const head = document.createElement("div"); head.className = "head";
+    const name = document.createElement("span"); name.className = "name"; name.textContent = b.name;
+    const kind = document.createElement("span"); kind.className = "kind"; kind.textContent = b.kind === "telegram" ? "Telegram" : "飞书";
+    const st = document.createElement("span"); st.className = "st" + (b.status.startsWith("已连接") ? " ok" : ""); st.textContent = b.status;
+    const sp = document.createElement("span"); sp.className = "sp"; sp.style.flex = "1";
+    const on = document.createElement("button"); on.className = "quiet"; on.textContent = b.enabled ? "停用" : "启用";
+    on.onclick = () => server({type: "bot_enable", id: b.id, on: !b.enabled});
+    const del = document.createElement("button"); del.className = "quiet"; del.textContent = removing === b.id ? "确认删除" : "删除";
+    del.onclick = () => { if (removing === b.id) { removing = null; server({type: "bot_remove", id: b.id}); } else { removing = b.id; drawBots(items); } };
+    head.append(name, kind, st, sp, on, del); row.append(head);
+    const users = document.createElement("div"); users.className = "users";
+    const label = document.createElement("span"); label.textContent = b.users.length ? "已配对：" : "还没有人配对"; users.append(label);
+    for (const u of b.users) {
+      const c = document.createElement("span"); c.className = "user";
+      const t = document.createElement("span"); t.textContent = u.name; const x = document.createElement("b"); x.textContent = "×"; x.title = "取消配对";
+      x.onclick = () => server({type: "bot_unpair", id: b.id, user: u.id}); c.append(t, x); users.append(c);
+    }
+    const perm = document.createElement("select"); perm.title = "这个机器人收到的指令能做什么。远程指令不能使用完全放行。";
+    for (const [v, l] of [["plan", "只读规划"], ["acceptEdits", "可改文件"], ["auto", "自动"]]) {
+      const o = document.createElement("option"); o.value = v; o.textContent = l; o.selected = b.permission === v; perm.append(o);
+    }
+    perm.onchange = () => server({type: "bot_permission", id: b.id, mode: perm.value});
+    const pair = document.createElement("button"); pair.textContent = "生成配对码"; pair.disabled = !b.enabled;
+    pair.onclick = () => server({type: "bot_pair", id: b.id});
+    users.append(perm, pair); row.append(users);
+    if (b.pair_code) {
+      const code = document.createElement("div"); code.className = "code"; code.append("在手机上把这句发给机器人（10 分钟内有效）：");
+      const s = document.createElement("strong"); s.textContent = " /pair " + b.pair_code; code.append(s); row.append(code);
+    }
+    box.append(row);
+  }
+}
+const showBots = window.carnot;
+window.carnot = ev => { if (ev.type === "bots") drawBots(ev.items); else showBots(ev); };
+
 const demo = new URLSearchParams(location.search).get("demo");
 if (demo) carnot(JSON.parse(demo));
-else server({type: "providers"});
+else { server({type: "providers"}); server({type: "bots"}); }
+const demoBots = new URLSearchParams(location.search).get("bots");
+if (demoBots) carnot(JSON.parse(demoBots));
 </script></body></html>

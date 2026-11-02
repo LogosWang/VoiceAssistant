@@ -195,6 +195,8 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
     var pageReady = false
     var pending = [String]()
     var inputOpen = false
+    var sessionItems = [[String: Any]]()
+    var currentSession = ""
     var chipsShown = false
 
     init(serverArgs: [String]) { self.serverArgs = serverArgs }
@@ -224,6 +226,11 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         server.onEvent = { [weak self] json in
             self?.send(json)
             if json.contains("\"open_settings\"") { self?.openSettings() }
+            if json.contains("\"sessions\""), let d = json.data(using: .utf8),
+               let ev = try? JSONSerialization.jsonObject(with: d) as? [String: Any], ev["type"] as? String == "sessions" {
+                self?.sessionItems = ev["items"] as? [[String: Any]] ?? []
+                self?.currentSession = ev["current"] as? String ?? ""
+            }
         }
         server.onExit = { [weak self] in self?.send(#"{"type":"state","state":"offline"}"#) }
         guard serverArgs == defaultArgs else { return server.start() }
@@ -423,6 +430,38 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
     private func makeMenu() -> NSMenu {
         let m = NSMenu()
         m.delegate = self
+        fillMenu(m)
+        return m
+    }
+
+    /// Conversations, newest first, each with what can be done to it.
+    private func sessionsMenu() -> NSMenu {
+        let m = NSMenu()
+        let new = NSMenuItem(title: "新对话", action: #selector(newSession), keyEquivalent: "")
+        new.target = self
+        m.addItem(new)
+        if !sessionItems.isEmpty { m.addItem(.separator()) }
+        let clients = ["telegram": "Telegram · ", "feishu": "飞书 · "]
+        for s in sessionItems.prefix(20) {
+            guard let id = s["id"] as? String else { continue }
+            let title = s["title"] as? String ?? "对话"
+            let item = NSMenuItem(title: (clients[s["client"] as? String ?? ""] ?? "") + title, action: nil, keyEquivalent: "")
+            item.state = id == currentSession ? .on : .off
+            let sub = NSMenu()
+            for (label, sel) in [("继续这个对话", #selector(useSession(_:))), ("重命名…", #selector(renameSession(_:))),
+                                 ("删除…", #selector(deleteSession(_:)))] {
+                let a = NSMenuItem(title: label, action: sel, keyEquivalent: "")
+                a.target = self
+                a.representedObject = ["id": id, "title": title]
+                sub.addItem(a)
+            }
+            item.submenu = sub
+            m.addItem(item)
+        }
+        return m
+    }
+
+    private func fillMenu(_ m: NSMenu) {
         @discardableResult func add(_ title: String, _ sel: Selector) -> NSMenuItem {
             let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
             i.target = self
@@ -430,7 +469,11 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
             return i
         }
         add("输入文字…", #selector(openInput))
+        let conversations = NSMenuItem(title: "会话", action: nil, keyEquivalent: "")
+        conversations.submenu = sessionsMenu()
+        m.addItem(conversations)
         add("连接设置…", #selector(openSettings))
+        add("远程机器人…", #selector(openBots))
         add("显示 / 隐藏人物", #selector(toggleVisible))
         add("重启语音服务", #selector(restartServer))
         add("开机自启", #selector(toggleLogin)).state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -439,11 +482,53 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         add("打开日志", #selector(openLog))
         m.addItem(.separator())
         add("退出 Carnot", #selector(quit))
-        return m
     }
 
     func menuNeedsUpdate(_ m: NSMenu) {
-        m.items.first { $0.action == #selector(toggleLogin) }?.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        guard m.items.contains(where: { $0.action == #selector(quit) }) else { return }
+        m.removeAllItems()
+        fillMenu(m)
+    }
+
+    @objc func newSession() { _ = server.send(["type": "session_new"]) }
+    @objc func useSession(_ i: NSMenuItem) {
+        guard let s = i.representedObject as? [String: String] else { return }
+        _ = server.send(["type": "session_use", "id": s["id"] ?? ""])
+    }
+    @objc func renameSession(_ i: NSMenuItem) {
+        guard let s = i.representedObject as? [String: String] else { return }
+        let alert = NSAlert()
+        alert.messageText = "重命名这个对话"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
+        field.stringValue = s["title"] ?? ""
+        alert.accessoryView = field
+        alert.addButton(withTitle: "确定")
+        alert.addButton(withTitle: "取消")
+        alert.window.level = NSWindow.Level(rawValue: panel.level.rawValue + 1)
+        alert.window.initialFirstResponder = field
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            _ = server.send(["type": "session_rename", "id": s["id"] ?? "", "title": field.stringValue])
+        }
+    }
+    @objc func deleteSession(_ i: NSMenuItem) {
+        guard let s = i.representedObject as? [String: String] else { return }
+        let alert = NSAlert()
+        alert.messageText = "删除“\(s["title"] ?? "")”？"
+        alert.informativeText = "只从列表里移除，之后不能再继续这个对话。"
+        alert.addButton(withTitle: "删除")
+        alert.addButton(withTitle: "取消")
+        alert.window.level = NSWindow.Level(rawValue: panel.level.rawValue + 1)
+        NSApp.activate(ignoringOtherApps: true)
+        if alert.runModal() == .alertFirstButtonReturn {
+            _ = server.send(["type": "session_delete", "id": s["id"] ?? ""])
+        }
+    }
+    @objc func openBots() {
+        openSettings()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.settingsWeb?.evaluateJavaScript("document.getElementById('bots').scrollIntoView()")
+        }
     }
 
     @objc func openInput() { setInput(true) }

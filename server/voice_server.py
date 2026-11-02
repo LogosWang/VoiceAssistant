@@ -24,8 +24,10 @@ import numpy as np
 import sherpa_onnx
 from pypinyin import lazy_pinyin
 
+import bots
 import events
 import providers
+import sessions
 import shared
 from aec import EchoCanceller
 from claude_bridge import ClaudeBridge
@@ -106,6 +108,9 @@ class DryRunBridge:
     def __init__(self):
         self.provider = providers.current()
 
+    def use_session(self, sid):
+        sessions.set_current(sid)
+
     def submit(self, text, dirs=()):
         log(f"[dry-run] would send to {self.provider}: {text} (dirs {list(dirs)})")
 
@@ -121,7 +126,8 @@ class DryRunBridge:
 
     def mute(self): pass
     def stop(self): pass
-    def new_session(self): pass
+    def new_session(self):
+        sessions.create(make_current=True)
     def wait_idle(self): pass
 
 
@@ -141,6 +147,7 @@ class Assistant:
         self.dc = 0.0
         self.installing = False
         self.voice_on = not os.path.exists(VOICE_FILE)
+        self.bots = None
         self.drop_recording = False  # typed input arrived: abandon the recording in progress
         self.resting = False  # rest mode: ignore commands until told to wake up
         self.follow_up_due = False   # reply finished: listen once more without the wake word
@@ -211,7 +218,7 @@ class Assistant:
                 s = "L"
             elif self.speaker.busy:
                 s = "S"
-            elif self.bridge.busy:
+            elif self.bridge.busy or (self.bots and self.bots.active):
                 s = "B"
             else:
                 s = "I"
@@ -446,6 +453,9 @@ class Assistant:
         sys.stdout.flush()
         os.execv(sys.executable, sys.orig_argv)
 
+    def _report_sessions(self):
+        events.emit("sessions", **sessions.listing())
+
     def _report_providers(self):
         threading.Thread(target=lambda: events.emit("providers", permission=self.cfg["claude"]["permission_mode"],
                                                     **providers.statuses()), daemon=True).start()
@@ -471,6 +481,12 @@ class Assistant:
         if kind == "voice":
             self.set_voice(bool(m.get("on")))
             return
+        if kind == "bots":
+            return self.bots.changed()
+        if kind.startswith("bot_"):
+            return self._bot_command(kind, m)
+        if kind.startswith("session_"):
+            return self._session_command(kind, m)
         if kind == "text":
             text, paths = m.get("text", "").strip(), m.get("paths", [])
             if text or paths:
@@ -494,6 +510,39 @@ class Assistant:
             self.bridge.sign_out(pid)
         elif kind == "install":
             threading.Thread(target=self._install, args=(pid,), daemon=True).start()
+
+    def _bot_command(self, kind, m):
+        b, bot = self.bots, m.get("id")
+        if kind == "bot_add":
+            try:
+                b.add(m.get("kind"), m.get("name", ""), m.get("token", ""), m.get("app_id", ""), m.get("secret", ""))
+            except ValueError:
+                events.emit("notice", text="信息不完整或格式不对，没有添加", hold=8000)
+        elif kind == "bot_remove":
+            b.remove(bot)
+        elif kind == "bot_enable":
+            b.enable(bot, m.get("on"))
+        elif kind == "bot_permission":
+            b.set_permission(bot, m.get("mode"))
+        elif kind == "bot_pair":
+            b.pair(bot)
+        elif kind == "bot_unpair":
+            b.unpair(bot, m.get("user"))
+
+    def _session_command(self, kind, m):
+        sid = m.get("id")
+        if kind == "session_new":
+            self.bridge.new_session()
+        elif kind == "session_use":
+            self.bridge.use_session(sid)
+        elif kind == "session_rename":
+            sessions.rename(sid, m.get("title", ""))
+        elif kind == "session_delete":
+            was_current = sessions.current() == sid
+            sessions.delete(sid)
+            if was_current:
+                self.bridge.use_session(sessions.current())
+        self._report_sessions()
 
     def _install(self, pid):
         package = providers.PROVIDERS[pid]["package"]
@@ -599,6 +648,7 @@ class Assistant:
             if d not in dirs:
                 dirs.append(d)
         self.bridge.submit(text, dirs)
+        self._report_sessions()
 
     # ---------- audio sources ----------
 
@@ -658,7 +708,8 @@ class Assistant:
                 if self.recording is not None:
                     self._end_recording()
                 self.follow_up_due = False
-                if stream is not None and not self.bridge.busy:  # a running task would die with the process
+                remote = self.bots and self.bots.active
+                if stream is not None and not self.bridge.busy and not remote:  # a running task would die with the process
                     self._restart_without_mic()
             try:
                 block = q.get(timeout=0.2)
@@ -702,6 +753,7 @@ def main():
     with open(args.config, "rb") as f:
         cfg = tomllib.load(f)
     events.enabled = args.ui
+    sessions.migrate(HERE)
     cfg["claude"]["permission_mode"] = providers.current_permission(cfg["claude"].get("permission_mode"))
     if args.ui:
         providers.fix_path()
@@ -711,6 +763,10 @@ def main():
     if args.ui:
         shared.seed_memory()
         shared.sync_skills()
+        a.bots = bots.Manager(cfg["claude"], a._transcribe, log, a.refresh_state, a._report_sessions)
+        a.bots.start()
+        a.bots.changed()
+        a._report_sessions()
         events.emit("voice", on=a.voice_on)
         threading.Thread(target=a._read_commands, daemon=True).start()
         a._report_providers()

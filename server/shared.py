@@ -15,6 +15,8 @@ INDEX = os.path.join(MEMORY_DIR, "MEMORY.md")
 SEEDED = os.path.join(HOME, ".memory_seeded")
 PERSONA = os.path.join(MEMORY_DIR, "carnot-persona.md")
 PERSONA_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "persona.md")
+PORTRAIT = os.path.join(MEMORY_DIR, "carnot-portrait.png")
+PORTRAIT_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "portrait.png")
 KNOWLEDGE = os.path.join(MEMORY_DIR, "knowledge")
 KNOWLEDGE_DEFAULT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "knowledge")
 CLAUDE_HOME = os.path.expanduser("~/.claude")
@@ -66,7 +68,15 @@ def ensure_persona():
         shutil.copy2(PERSONA_DEFAULT, PERSONA)
         with open(INDEX, "a", encoding="utf-8") as f:
             f.write("\n- [Carnot 的人物设定](carnot-persona.md) — 名字、来历、性格，以及知识体系和分寸\n")
+    _add_portrait()
     ensure_knowledge()
+
+
+def _add_portrait():
+    if not os.path.exists(PORTRAIT) and os.path.exists(PORTRAIT_DEFAULT):
+        shutil.copy2(PORTRAIT_DEFAULT, PORTRAIT)
+        with open(INDEX, "a", encoding="utf-8") as f:
+            f.write("- [Carnot 的立绘](carnot-portrait.png) — 自己的样子，被问到长相时打开看\n")
 
 
 def ensure_knowledge():
