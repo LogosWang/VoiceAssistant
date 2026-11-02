@@ -1,0 +1,17 @@
+# created by install.sh
+server/.venv/
+server/models/
+server/syscap/syscap
+vscode/*.vsix
+vscode/node_modules/
+__pycache__/
+*.pyc
+
+# personal, created at run time
+server/snapshots/
+server/.claude_session
+server/.session_*
+server/.provider
+server/.voice_off
+
+.DS_Store

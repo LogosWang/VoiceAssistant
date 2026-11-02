@@ -1,0 +1,12 @@
+Use the imagegen skill and built-in image_gen tool. Make these three images, one image_gen call each, and copy each result into the current directory under the given name. Do not write code.
+
+ref1, ref2 and ref3 are references for how a face is lit. Do NOT copy the person in them. face1.png is my own original character: keep her eyes, gaze, hair, hat, clothes, framing and the flat #FF00FF background exactly as they are.
+
+1. face.png: edit face1.png. Change only the lighting on the skin and the mouth.
+- Shadow: remove the hard horizontal shadow edge across the middle of the face. Instead the WHOLE face, forehead, cheeks, mouth and chin, sits in one even, soft, cool shadow tone, slightly darker than the skin of the neck highlight, no mask-like band.
+- Light: the only lit shape on the face is one narrow, crisp vertical highlight along the bridge of the nose, a little longer than now, plus at most a very thin lit edge along one side of the jaw.
+- Mouth: replace it with one single short thin horizontal ink stroke in a dark muted tone, perfectly straight and relaxed. No lips, no lip colour, no philtrum, no shading, no upturned or downturned corners.
+
+2. eyes_closed.png: edit your new face.png. Change ONLY the eyes: gently closed, a simple curved dark lash line. Everything else identical, including the flat #FF00FF background.
+
+3. mouth_open.png: edit your new face.png. Change ONLY the mouth: the same stroke opened just a little into a small soft rounded shape in a dark muted brown-grey, not pure black, about as wide as the stroke, no teeth, no lips. Everything else identical, including the flat #FF00FF background.

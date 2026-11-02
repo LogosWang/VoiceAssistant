@@ -1,19 +1,63 @@
-# Carnot 语音助手（Claude Code skill）
+# Carnot
 
-用 Mac 麦克风喊 "Carnot"（卡诺）唤醒，说话交给 Claude Code，回答用语音读出来。语音识别在本机离线运行。电脑正在播放的声音会被回声消除去掉，播放的音量和音质不受影响。
+macOS 桌面助手：屏幕上常驻一个人物，可以语音唤醒，也可以打字。接入 Claude、ChatGPT、Gemini、ZCode、DeepSeek、豆包，桌面 App 和 VS Code 插件共用同一套记忆和 skill。
 
-## 部署到新电脑
+- **语音：** 喊 "Carnot"（卡诺）唤醒，语音识别在本机离线运行。回声消除会去掉电脑正在播放的声音，不影响音量和音质。
+- **界面：** 悬浮在所有桌面之上，带字幕和输入框，可附加文件和文件夹；思考时身后的蒸汽机会运转。
+- **VS Code：** 侧边栏对话，输入 `/` 选 skill，可附带当前文件。
+- **共享：** 记忆在 `~/.carnot/memory`，skill 在 `~/.claude/skills` 和 `~/.agents/skills`，换 AI、换客户端都是同一套。
 
-1. 把整个 `carnot-voice` 文件夹拷到新电脑的 `~/.claude/skills/carnot-voice`。这样 Claude Code 能用这个 skill，也可以放在别的位置。
-2. 运行安装脚本，大约需要几分钟，会下载 1 GB 模型：
-   ```
-   ~/.claude/skills/carnot-voice/install.sh
-   ```
-   需要先装好：macOS 13 以上、Homebrew、Claude Code（并已登录）。Xcode 命令行工具和 Python 由脚本检查并提示安装。
-3. 启动：
-   ```
-   ~/.claude/skills/carnot-voice/run.sh
-   ```
-   第一次启动时，要给终端 App 授权 **麦克风** 和 **屏幕与系统录音**。授权后重开终端。
+## 安装
 
-设置文件是 `app/config.toml`，包括 Claude 工作目录、模型、麦克风、唤醒灵敏度和声音。也可以直接让 Claude Code 帮你改，它会按 SKILL.md 操作。
+需要 macOS 13 以上和 [Homebrew](https://brew.sh)。其余依赖由脚本安装，首次约需下载 1 GB 模型。
+
+```bash
+git clone https://github.com/LogosWang/VoiceAssistant.git ~/.claude/skills/carnot-voice
+~/.claude/skills/carnot-voice/install.sh
+```
+
+放在 `~/.claude/skills` 下，Claude Code 就能把它当 skill 用，也可以放在别处。安装后不要移动这个文件夹；如果移动了，重新运行一次 `install.sh`。
+
+装好后：
+
+1. 从"应用程序"打开 Carnot，允许麦克风和屏幕与系统录音，然后退出再打开一次。
+2. 在 VS Code 里执行 `Developer: Reload Window`，左侧活动栏会出现 Carnot。
+3. 点输入框左边的按钮，登录要用的 AI 或填 API Key。
+
+App 默认开机自启，可以在菜单栏图标或右键人物的菜单里关闭。
+
+## 接入的 AI
+
+| AI | 登录方式 | 运行方式 |
+|---|---|---|
+| Claude | 订阅或 API Key | Claude Code |
+| ChatGPT | 订阅或 OpenAI API Key | Codex 命令行（在设置里安装） |
+| Gemini | Google 账号或 API Key | Gemini 命令行（在设置里安装）。免费和 Google One 账号已被转到 Antigravity CLI，这类账号请用 Key |
+| ZCode | GLM Coding Plan 的 API Key | Claude Code + Z.ai 接口 |
+| DeepSeek | API Key | Claude Code + DeepSeek 接口 |
+| 豆包 | 火山方舟 Coding Plan 的 API Key | Claude Code + 方舟接口 |
+
+API Key 只存在本机钥匙串里。
+
+## 需要知道
+
+- **权限：** 默认 `permission_mode = "auto"`，高风险操作会被拦下。改成 `bypassPermissions` 后，AI 可以不经确认执行任何操作，而旁边任何人都能喊唤醒词。
+- **数据：** 指令、附件、记忆索引和 AI 打开的记忆文件，都会发给你选的那家 AI；回复文字默认由 edge-tts 转语音，会发给微软。
+- **屏幕录制图标：** 回声消除要读取系统音频，所以运行时菜单栏会显示录屏图标。点输入框上的麦克风按钮关闭语音模式后，麦克风和音频采集都会停止。
+- **记忆不跨电脑同步：** 换电脑要自己带上 `~/.carnot/memory`。
+
+## 设置和排错
+
+设置在 `server/config.toml`，日志在 `~/Library/Logs/Carnot/carnot.log`。更多见 [SKILL.md](SKILL.md)。
+
+## 卸载
+
+```bash
+osascript -e 'quit app "Carnot"'
+rm -rf /Applications/Carnot.app "$HOME/Library/Application Support/Carnot"
+tccutil reset All com.carnot.assistant
+"/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" --uninstall-extension carnot-local.carnot
+security delete-identity -c "Carnot Local Signing"
+```
+
+记忆在 `~/.carnot`，要不要删由你决定。

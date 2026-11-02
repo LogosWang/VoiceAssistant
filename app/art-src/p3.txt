@@ -1,0 +1,12 @@
+Use the imagegen skill and built-in image_gen tool. Make these three images, one image_gen call each, and copy each result into the current directory under the given name. Do not write code.
+
+ref1, ref2 and ref3 are references for how a face is lit and how the eyes carry the mood. Study them closely and apply that treatment. Do NOT copy the person in them. current.png is my own original character: she stays herself, with her own face shape, hair, hat and clothes.
+
+1. face.png: edit current.png. Change ONLY the face, keep hair, hat, collar, cravat, coat, framing and the flat #FF00FF background identical.
+- Lighting as in the references: most of the face lies in one soft, flat, cool shadow tone falling from the hat brim, with a crisp edge. Light is caught on the bridge of the nose as a single clear narrow highlight, the main light accent of the face. No drawn nose line.
+- Mouth: greatly simplified, one short, thin, quiet horizontal ink stroke, straight and relaxed. Corners NOT turned down, no frown, no pout, no lip shape, no lip colour, no shading around it.
+- Eyes: the melancholy comes only from here, as in the references. Calm, slightly heavy upper lids covering the top of the iris, a quiet gaze resting just off-centre and slightly lowered, past the viewer. Clean thin lash line, muted grey iris, small soft highlight. No dark circles, no heavy eye make-up, no wide staring, brows relaxed and level, not knitted. Both eyes visible, the face stays frontal and symmetrical.
+
+2. eyes_closed.png: edit your new face.png. Change ONLY the eyes: gently closed, a simple curved dark lash line. Same lighting. Everything else identical, including the flat #FF00FF background.
+
+3. mouth_open.png: edit your new face.png. Change ONLY the mouth: the same thin stroke opened just slightly into a small simple dark shape, no teeth or lip detail. Everything else identical, including the flat #FF00FF background.

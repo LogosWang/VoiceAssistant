@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import threading
 
+import events
+
 
 class Speaker:
     """say() queues a sentence; one thread synthesizes sentence N+1 while another plays sentence N."""
@@ -13,6 +15,7 @@ class Speaker:
     def __init__(self, cfg, on_change=None):
         self.cfg = cfg
         self.on_change = on_change or (lambda: None)
+        self.silent = False  # voice mode off: replies only appear as text
         self._synth_q = queue.Queue()
         self._play_q = queue.Queue()
         self._proc = None
@@ -33,6 +36,9 @@ class Speaker:
     def say(self, text):
         text = clean_for_speech(text)
         if not text:
+            return
+        if self.silent:
+            events.emit("reply", text=text, append=True)
             return
         with self._lock:
             self._pending += 1
@@ -71,16 +77,17 @@ class Speaker:
                     print(f"[tts] edge-tts failed ({e}), falling back to say", flush=True)
             with self._lock:
                 if gen == self._gen:
-                    self._play_q.put((gen, cmd))
+                    self._play_q.put((gen, cmd, text))
                     continue
             self._drop()
 
     def _play_loop(self):
         while True:
-            gen, cmd = self._play_q.get()
+            gen, cmd, text = self._play_q.get()
             with self._lock:
                 stale = gen != self._gen
                 if not stale:
+                    events.emit("reply", text=text)  # subtitle appears as the sentence starts playing
                     self._proc = subprocess.Popen(cmd)
             if not stale:
                 self._proc.wait()

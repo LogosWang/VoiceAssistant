@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>Carnot</title>
+<style>
+:root{--line:#2a2024;--skin:#f4d6c2;--skin-sh:#c98f7c;--hair:#b9b1a8;--hair-lit:#e4ded4;--hair-sh:#6f6864;--hat:#1f2233;--hat-lit:#3b4158;--wine:#6e2433;--brass:#c49a52;--brass-sh:#7c5a26;--coat:#23372f;--coat-lit:#3a5548;--ivory:#efe8da;--ivory-sh:#b9ae9c}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-family:"Songti SC","PingFang SC",-apple-system,serif;user-select:none;-webkit-user-select:none}
+#stage{position:absolute;inset:0}
+#subs{position:fixed;left:4px;right:4px;bottom:54px;z-index:5;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none}
+.bubble{max-width:100%;padding:5px 10px;border-radius:3px;font-size:14px;line-height:1.4;color:#f3ecdd;background:rgba(24,22,28,.9);border:1px solid rgba(196,154,82,.75);outline:1px solid rgba(196,154,82,.28);outline-offset:2px;box-shadow:0 3px 12px rgba(0,0,0,.35);word-break:break-word;transition:opacity .35s,transform .35s;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}
+.bubble.off{opacity:0;transform:translateY(6px);pointer-events:none}
+#user{font-size:12px;padding:3px 9px;color:#e8dcc4;background:rgba(58,30,38,.92);-webkit-line-clamp:1}
+#user.partial{color:#b9a78f;font-style:italic}
+#reply{font-size:13px;-webkit-line-clamp:3}
+#notice{font-size:12px;background:rgba(110,36,51,.95);-webkit-line-clamp:3}
+#inputbar{position:fixed;left:4px;right:4px;bottom:4px;height:44px;display:flex;align-items:center;gap:5px;padding:5px 6px;background:rgba(24,22,28,.96);border:1px solid rgba(196,154,82,.85);outline:1px solid rgba(196,154,82,.28);outline-offset:2px;border-radius:3px;box-shadow:0 3px 12px rgba(0,0,0,.35)}
+#input{flex:1;min-width:0;background:none;border:0;outline:0;color:#f3ecdd;font:15px/1.4 "Songti SC","PingFang SC",serif;user-select:text;-webkit-user-select:text}
+#input::placeholder{color:#8f8676}
+#inputbar button{flex:none;height:30px;border:1px solid var(--brass);background:#2c2620;color:#e0bf7c;cursor:pointer;font:13px "Songti SC","PingFang SC",serif}
+#prov{max-width:58px;padding:0 7px;border-radius:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#prov.bad{color:#e8a06a;border-color:#a8505f}
+#attach,#sendbtn,#voice{width:30px;border-radius:50%;padding:0}
+#voice{display:flex;align-items:center;justify-content:center}
+#voice svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:none}
+#voice .slash{display:none}
+#voice.off{color:#8f8676;border-color:#57503f;background:#1c1a1e}
+#voice.off .slash{display:inline}
+#chips{position:fixed;left:4px;right:4px;bottom:52px;z-index:6;display:flex;flex-wrap:nowrap;overflow:hidden;justify-content:center;gap:4px}
+.chip{display:flex;align-items:center;gap:4px;max-width:140px;min-width:0;padding:2px 3px 2px 7px;background:rgba(24,22,28,.94);border:1px solid rgba(196,154,82,.7);border-radius:2px;color:#e8dcc4;font-size:12px}
+.chip span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.chip b{cursor:pointer;color:#c49a52;font-weight:400;padding:0 3px}
+#char{position:fixed;left:50%;bottom:52px;margin-left:-160px;width:320px;height:416px;transform:scale(.62);transform-origin:50% 100%}
+#char img{position:absolute;display:block;pointer-events:none}
+#engine,#engineFront{left:0;top:70px;width:320px}
+.rod{width:42.1px;top:15.2px;animation:stroke 1.05s ease-in-out infinite alternate;animation-play-state:paused}
+#rodL{left:33.7px}
+#rodR{left:269.7px;animation-delay:-1.05s}
+@keyframes stroke{from{transform:translateY(0)}to{transform:translateY(46px)}}
+[data-state=thinking] .rod{animation-play-state:running}
+#figure{position:absolute;left:21px;bottom:0;width:277px;height:416px;transform-origin:50% 100%;transition:transform .8s cubic-bezier(.35,0,.25,1);animation:breathe 4.6s ease-in-out infinite}
+#figure img{position:absolute}
+#base{left:0;top:0;width:100%;height:100%}
+#eyes{left:22.949%;top:30.339%;width:52.930%;height:14.388%;opacity:0}
+#mouth{left:45.996%;top:47.070%;width:7.617%;height:4.036%;opacity:0}
+@keyframes breathe{50%{translate:0 1.5px}}
+[data-state=listening] #figure{transform:rotate(-1deg)}
+[data-state=thinking] #figure{transform:rotate(.8deg)}
+[data-state=offline] #figure{transform:rotate(1.4deg);animation-duration:7s}
+#steam{position:absolute;inset:0;pointer-events:none;display:none}
+[data-state=thinking] #steam{display:block}
+.puff{position:absolute;width:44px;height:44px;margin:-22px;border-radius:50%;background:radial-gradient(closest-side,rgba(250,250,247,.92),rgba(240,240,237,.45) 58%,transparent);opacity:0;animation:puff 2.1s ease-out infinite}
+@keyframes puff{0%{opacity:0;transform:translate(0,0) scale(.3)}14%{opacity:.95}100%{opacity:0;transform:translate(var(--dx),-92px) scale(2.3)}}
+#ring{position:absolute;left:6px;top:0;width:306px;height:410px;border-radius:50%;border:1.5px solid #c49a52;opacity:0;pointer-events:none}
+[data-state=listening] #ring{animation:ring 1.8s ease-out infinite}
+@keyframes ring{from{transform:scale(.92);opacity:.75}to{transform:scale(1.04);opacity:0}}
+#hint{position:absolute;right:52px;top:30px;display:none;color:#efe8da;font:italic 600 22px "Songti SC",serif;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+[data-state=offline] #hint{display:block}
+#hint span{display:inline-block;animation:float 3.6s ease-out infinite}
+#hint span:nth-child(2){animation-delay:1.2s}
+@keyframes float{0%{opacity:0;transform:translate(0,8px)}25%{opacity:.95}100%{opacity:0;transform:translate(10px,-26px)}}
+</style></head>
+<body><div id="stage" data-state="offline">
+<div id="subs">
+  <div id="notice" class="bubble off"></div>
+  <div id="user" class="bubble off"></div>
+  <div id="reply" class="bubble off"></div>
+</div>
+<div id="char" aria-label="Carnot">
+  <div id="ring"></div>
+  <img id="engine" src="art/engine.webp" alt="">
+  <img class="rod" id="rodL" src="art/piston.webp" alt="">
+  <img class="rod" id="rodR" src="art/piston.webp" alt="">
+  <img id="engineFront" src="art/engine_front.webp" alt="">
+  <div id="steam"></div>
+  <div id="figure">
+    <img id="base" src="art/char.webp" alt="">
+    <img id="eyes" src="art/eyes.webp" alt="">
+    <img id="mouth" src="art/mouth.webp" alt="">
+  </div>
+  <div id="hint"><span>z</span> <span>z</span></div>
+</div></div>
+<div id="chips"></div>
+<form id="inputbar"><button id="prov" type="button" title="连接设置">Claude</button><button id="voice" type="button" title="语音模式：开"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path class="slash" d="M4 3l16 18"/></svg></button><button id="attach" type="button" title="附加文件或文件夹">＋</button><input id="input" placeholder="写给 Carnot…" autocomplete="off" spellcheck="false"><button id="sendbtn" type="submit">➤</button></form>
+<script>
+const $ = id => document.getElementById(id);
+const stage = $("stage");
+const mix = (a, b, t) => a + (b - a) * t;
+const P = (a, b, t) => [mix(a[0], b[0], t), mix(a[1], b[1], t)];
+const q = new URLSearchParams(location.search);
+const pt = p => p[0].toFixed(1) + " " + p[1].toFixed(1);
+
+
+// ---------- eyes and mouth: painted patches over the portrait ----------
+const eyes = $("eyes"), mouth = $("mouth");
+if (stage.dataset.state === "offline") eyes.style.opacity = 1;   // asleep until the service reports in
+const asleep = () => stage.dataset.state === "offline";
+const STILL = q.has("still");
+function blink() {                          // swapped outright like drawn animation: a fade would show both pairs of eyes
+  if (asleep()) return;
+  eyes.style.opacity = 1;
+  setTimeout(() => { if (!asleep()) eyes.style.opacity = 0; }, 110);
+}
+(function blinkLoop() {
+  if (STILL) return;
+  let wait = 2400 + Math.random() * 3800;
+  if (Math.random() < .14) { blink(); setTimeout(blink, 300); wait += 300; }   // double
+  else blink();
+  setTimeout(blinkLoop, wait);
+})();
+setInterval(() => {                         // a plausible flap; the audio isn't analysed
+  if (stage.dataset.state === "speaking") mouth.style.opacity = Math.random() < .55 ? 1 : 0;
+  else if (mouth.style.opacity !== "0") mouth.style.opacity = 0;
+}, 105);
+
+// ---------- steam from the tops of the cylinders, and a little from the valves ----------
+[[55, 82, 0], [55, 82, .7], [55, 82, 1.4], [291, 82, .35], [291, 82, 1.05], [291, 82, 1.75]].forEach(([x, y, delay], i) => {
+  const p = document.createElement("div");
+  p.className = "puff";
+  p.style.cssText = `left:${x}px;top:${y}px;animation-delay:${delay}s;--dx:${i % 2 ? 16 : -14}px`;
+  $("steam").append(p);
+});
+
+// ---------- state and subtitles ----------
+const HOLD = 9000;
+let clearT = null, noticeT = null, voiceOn = true;
+function show(el, text, cls) { el.textContent = text; el.className = "bubble " + (cls || ""); if (!text) el.classList.add("off"); }
+function hide(el) { el.classList.add("off"); }
+function scheduleClear() {   // text that wasn't read aloud needs time to be read
+  clearTimeout(clearT);
+  const wait = voiceOn ? HOLD : Math.min(60000, HOLD + $("reply").textContent.length * 200);
+  clearT = setTimeout(() => { hide($("user")); hide($("reply")); }, wait);
+}
+window.carnot = ev => {
+  if (ev.type === "state") {
+    stage.dataset.state = ev.state;
+    clearTimeout(clearT);
+    eyes.style.opacity = ev.state === "offline" ? 1 : 0;
+    if (ev.state === "listening") { hide($("reply")); show($("user"), "", ""); }
+    if (ev.state === "idle" || ev.state === "offline") scheduleClear();
+  } else if (ev.type === "voice") {
+    voiceOn = ev.on;
+    $("voice").classList.toggle("off", !ev.on);
+    $("voice").title = ev.on ? "语音模式：开（点击关闭）" : "语音模式：关（点击打开）";
+  } else if (ev.type === "user") {
+    if (ev.final) hide($("reply"));
+    if (ev.final && !ev.text) hide($("user")); else show($("user"), ev.text, ev.final ? "" : "partial");
+  } else if (ev.type === "reply") {
+    clearTimeout(clearT);
+    const prev = ev.append && !$("reply").classList.contains("off") ? $("reply").textContent : "";
+    let shown = prev + ev.text;
+    if (shown.length > 58) shown = "…" + shown.slice(-58);  // three lines, newest last, clear of her face
+    show($("reply"), shown);
+  } else if (ev.type === "notice") {
+    clearTimeout(noticeT); show($("notice"), ev.text);
+    if (ev.text) noticeT = setTimeout(() => hide($("notice")), ev.hold || 15000);
+  } else if (ev.type === "input") {
+    if (ev.open) input.focus(); else input.blur();
+  } else if (ev.type === "attached") {
+    for (const p of ev.paths) if (!attached.includes(p)) attached.push(p);
+    drawChips();
+  } else if (ev.type === "providers") {
+    const p = ev.items.find(i => i.id === ev.current);
+    $("prov").textContent = p.name; $("prov").classList.toggle("bad", !p.ready);
+    $("prov").title = p.ready ? "连接设置" : `${p.name} 还没连接，点这里设置`;
+  }
+};
+
+// ---------- typed input ----------
+const bar = $("inputbar"), input = $("input");
+const native = m => window.webkit?.messageHandlers?.carnot?.postMessage(m);
+let attached = [];
+function drawChips() {
+  const box = $("chips"); box.textContent = "";
+  attached.forEach(p => {
+    const c = document.createElement("div"), name = document.createElement("span"), x = document.createElement("b");
+    c.className = "chip"; c.title = p; name.textContent = "📎 " + p.split("/").filter(Boolean).pop(); x.textContent = "×";
+    x.onclick = () => { attached = attached.filter(q => q !== p); drawChips(); };
+    c.append(name, x); box.append(c);
+  });
+  native({type: "chips", count: attached.length});
+}
+bar.addEventListener("submit", e => {
+  e.preventDefault();
+  const text = input.value.trim();
+  if (e.isComposing || (!text && !attached.length)) return;
+  native({type: "server", payload: {type: "text", text, paths: attached}});
+  input.value = ""; attached = []; drawChips();
+});
+input.addEventListener("keydown", e => {
+  if (e.key === "Escape" && !e.isComposing) { input.value = ""; native({type: "closeInput"}); }
+});
+input.addEventListener("focus", () => native({type: "focused"}));
+$("attach").onclick = () => native({type: "attach"});
+$("voice").onclick = () => native({type: "server", payload: {type: "voice", on: !voiceOn}});
+$("prov").onclick = () => native({type: "settings"});
+
+// ---------- preview: index.html?state=speaking&still=1&eyes=1&user=..&reply=.. ----------
+if (q.get("state")) {
+  carnot({type: "state", state: q.get("state")});
+  if (q.has("eyes")) eyes.style.opacity = q.get("eyes");
+  if (q.has("mouth")) { mouth.style.opacity = q.get("mouth"); }
+  if (q.get("user")) carnot({type: "user", text: q.get("user"), final: true});
+  if (q.get("reply")) carnot({type: "reply", text: q.get("reply")});
+}
+</script></body></html>

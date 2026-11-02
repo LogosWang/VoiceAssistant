@@ -1,99 +1,80 @@
 ---
 name: carnot-voice
-description: Install, start, configure and troubleshoot "Carnot", a local voice assistant for Claude Code on macOS. It listens on the Mac's microphone for the wake word "Carnot" (卡诺), transcribes speech offline (sherpa-onnx SenseVoice), runs headless `claude -p`, and speaks the reply (edge-tts). Echo cancellation subtracts everything the Mac plays, so you can interrupt it and media isn't taken for a command. Use when the user wants to set up, deploy, run, tune or debug the voice assistant / 语音助手 / Carnot / 卡诺 / wake word / 回声消除, or asks why it doesn't wake, mishears, or answers media playing in the room.
+description: Install, start, configure and troubleshoot Carnot, a macOS desktop assistant with a floating character, voice wake word ("Carnot", 卡诺), typed input, subtitles and a VS Code extension. It runs Claude, ChatGPT, Gemini, ZCode, DeepSeek or Doubao, sharing one memory and one set of skills across the app, the extension and every AI. Use when the user wants to deploy, run, tune or debug Carnot / 语音助手 / 卡诺 / wake word / 回声消除 / shared memory, or asks why it doesn't wake, mishears, or won't connect.
 ---
 
-# Carnot voice assistant
-
-Everything is in this folder:
+# Carnot
 
 ```
-install.sh        one-time setup (re-runnable)
-run.sh            start on the Mac mic; extra args go to voice_server.py
-app/
-  voice_server.py   audio loop: AEC -> wake word (KWS) -> VAD endpointing -> ASR -> commands
-  aec.py            echo cancellation: Speex MDF + residual suppression, aligned on hardware timestamps
-  syscap/main.swift ScreenCaptureKit helper that streams what the Mac plays (the AEC reference)
-  claude_bridge.py  runs `claude -p --output-format stream-json`, keeps the session, speaks sentences
-  tts.py            edge-tts (falls back to macOS `say`)
-  vision.py         camera (ffmpeg) / screen snapshots attached to commands
-  config.toml       all settings
-  test_clips/command.wav  self-test clip
+install.sh     one-step install, safe to re-run; starts nothing
+server/        voice service and AI runner (Python)
+  voice_server.py   audio loop: echo cancel -> wake word -> VAD -> ASR -> commands, voice switch
+  aec.py            Speex echo cancellation, aligned on hardware timestamps
+  syscap/main.swift ScreenCaptureKit helper: what the Mac plays, the echo reference
+  agent_core.py     one turn through any AI's CLI; used by the app and the extension
+  carnot_agent.py   command line front of agent_core, used by the extension
+  claude_bridge.py  the app's side: queue, speech, browser login on expiry
+  providers.py      the six AIs, their sign-in, keys in the keychain
+  shared.py         shared memory and skills, persona
+  persona.md, knowledge/   defaults copied into ~/.carnot/memory
+  config.toml       settings
+app/           Carnot.app: floating window (main.swift), page (index.html, settings.html), layers (art/)
+vscode/        the extension
 ```
 
-Requirements: macOS 13+, Homebrew, Xcode command line tools, Python 3.11+, Claude Code CLI logged in. About 1.3 GB on disk after install (models + venv, both inside `app/`).
+Needs macOS 13+, Xcode command line tools and Homebrew. The installer adds the rest.
 
 ## Install
 
-Run `./install.sh` from this folder (you may run it yourself; it takes a few minutes, mostly the 1 GB model download). It installs `speexdsp` via brew, builds the venv with pinned packages, downloads models, compiles `syscap`, checks for `claude`, and runs a dry-run self-test on `test_clips/command.wav`. A good self-test prints `[wake] Carnot` and an `[asr]` line.
+Run `./install.sh`. It takes a few minutes, mostly a 1 GB model download. It stops with a message if Xcode tools or Homebrew are missing: don't pipe a remote script into a shell for the user, point them at https://brew.sh.
 
-If it stops early it prints why: missing Xcode tools (`xcode-select --install` was launched; rerun after it finishes), missing Homebrew (point the user to https://brew.sh; don't pipe a remote script into bash yourself), or no `claude` CLI.
+It builds `/Applications/Carnot.app`, signs it with a local certificate it creates in the login keychain (`Carnot Local Signing`), enables launch at login, and installs the extension if VS Code is present.
 
 ## Start
 
-**Don't start the server yourself.** It runs Claude with `permission_mode = "bypassPermissions"` and stays in the foreground. Give the user the command to run in their own terminal:
+**Don't open the app for the user with real settings.** It can act on their machine through an AI with whatever `permission_mode` allows. Tell them to open Carnot from Applications. First open asks for Microphone and Screen Recording (and any protected folder used), then they quit and reopen it. In VS Code: `Developer: Reload Window`.
 
-```
-"<this folder>/run.sh"
-```
+To test without acting on anything: `/Applications/Carnot.app/Contents/MacOS/Carnot --dry-run` makes the service print commands instead of sending them to an AI, and it doesn't open the mic.
 
-`run.sh` kills any previous instance first. Other modes: `run.sh --dry-run` (print transcripts, never call Claude), `run.sh --save-dir /tmp/carnot` (save every recording as wav for debugging).
+## Configure
 
-First start: macOS asks for **Microphone** and **Screen Recording** (系统设置 → 隐私与安全性 → 屏幕与系统录音) for the terminal app. Both are needed; after granting Screen Recording the terminal must be restarted. The menu-bar screen-recording indicator stays on while it runs; that is the system-audio capture, nothing is recorded to disk.
-
-Healthy startup log: `ready, wake word: Carnot`, `[aec] capturing system audio`, `using microphone: <name>`.
-
-## Configure (`app/config.toml`)
-
-Ask before changing what the user didn't mention. Common edits:
+`server/config.toml`, then restart the app. Ask before changing what the user didn't mention.
 
 | Want | Key |
 |---|---|
-| where Claude works | `[claude] workdir` (default `~`), `add_dirs` |
-| model / safety | `[claude] model`, `permission_mode` (`"auto"` blocks risky actions instead of never asking) |
-| which microphone | `[mic] device`: part of the name; empty = system default input |
-| wakes on its own | raise `[wake] threshold` (0.20) |
-| misses the wake word | lower `threshold` or raise `score` (1.5); raise `[record] gain` for a quiet mic |
-| another wake name | `[wake] name`, `pronunciations` (Chinese characters, or CMU phones from `app/models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/en.phone`), `asr_aliases` |
-| cuts you off / waits too long | `[record] end_silence` (1.0 s) |
-| voice | `[tts] edge_voice`, `edge_rate`; `engine = "say"` for offline |
-| no follow-up listening | `[record] follow_up = false` |
-| camera | `[vision] camera` name or index (`ffmpeg -f avfoundation -list_devices true -i ""`), needs `brew install ffmpeg` |
-| turn echo cancellation off | `[aec] enabled = false` |
+| where the AI works | `[claude] workdir`, `add_dirs` |
+| what it may do unasked | `[claude] permission_mode`: `auto` by default; `bypassPermissions` never asks, and anyone within earshot can say the wake word |
+| which microphone | `[mic] device`, part of the name |
+| wakes on its own / misses you | `[wake] threshold` up / down, `score` |
+| another wake name | `[wake] name`, `pronunciations`, `asr_aliases` |
+| voice | `[tts] edge_voice`, `engine = "say"` for offline |
 
-Restart (`run.sh`) after editing.
+AIs and API keys are in the app's connection settings (button on the left of the input box), or the extension's `Carnot: 连接设置`. The extension's `carnot.permissionMode` is separate and has no approval prompt: actions needing approval fail.
 
-## How the echo cancellation works
+## Memory and skills
 
-These details matter when debugging:
-
-- `syscap` captures system audio through ScreenCaptureKit. No output device is switched and nothing is ducked; media sounds exactly the same. Apple's VoiceProcessingIO was rejected because it ducks other audio about 8 dB, and WebRTC AEC3 squashed the near-end voice. Don't switch back to either.
-- Mic frames carry the PortAudio `inputBufferAdcTime`, and syscap records carry their CMSampleBuffer PTS. Both are on the host clock (= `time.monotonic()`), so each 10 ms mic frame is paired with the reference that was playing when it was recorded. A GCC-PHAT check realigns only if the echo falls outside the filter tail (`tail_ms = 400`).
-- Speex needs a few seconds of playback to converge, giving ~10–15 dB echo reduction plus residual suppression. While other media is playing, the follow-up window (no wake word) is skipped, so leftover media can't become a command.
-- Barge-in: saying the wake word while Carnot speaks mutes the rest of the reply (the Claude task keeps running; "停止" kills it).
+- `~/.carnot/memory`: `MEMORY.md` index plus one file per fact, handed to the AI in use every turn. Includes the persona and `knowledge/`. It stays on this Mac; memory isn't synced between machines.
+- First run copies Claude Code's per-project memories in, one-way. Claude Code outside Carnot keeps its own.
+- Skills stay in `~/.claude/skills` and `~/.agents/skills`, symlinked both ways, never overwritten.
+- These contents go to whichever AI is selected.
 
 ## Troubleshooting
 
-Get the actual log lines from the user (or a `--save-dir` recording) before changing anything. Don't guess.
+Read `~/Library/Logs/Carnot/carnot.log` first. Don't guess.
 
-| Symptom | Check |
+| Symptom | Cause and fix |
 |---|---|
-| `[aec] off: ... Screen Recording permission?` | grant 屏幕与系统录音 to the terminal app, restart the terminal |
-| `[aec] system audio capture hears nothing while Carnot speaks` | permission granted but capture is silent: same fix; check that `app/syscap/syscap` runs and prints `capturing` |
-| `libspeexdsp not found` | `brew install speexdsp` |
-| no reaction at all | `using microphone:` line shows the wrong device → set `[mic] device`; check Microphone permission; run with `--save-dir` and inspect the `[level]` lines (peak ≈ 0 means no audio is arriving) |
-| media triggers commands | confirm `[aec] capturing` is present; raise `threshold` |
-| `调用 Claude 出错了` | run `claude -p hi` in the same terminal to see the error (login, model access); set `[claude] model = ""` to use the account default |
-| `edge-tts` errors offline | it falls back to `say`; or set `engine = "say"` |
+| Screen Recording dialog keeps appearing, switch already on | The switch belongs to an old signature. `tccutil reset ScreenCapture <bundle id>`, then grant again. `tccd` logs `Failed to match existing code requirement` |
+| `[aec] off: cannot capture system audio` | Screen Recording not granted, or the app not reopened after granting |
+| 需要先安装, while it is installed | The CLI isn't on any PATH `providers.fix_path` finds. Check `zsh -ilc 'which claude'` |
+| no reaction to voice | `using microphone:` shows the wrong device; Microphone permission; voice button off (`server/.voice_off`) |
+| media answered as commands | `[aec] capturing` missing, or raise `threshold` |
+| refused login | subscription: the browser login opens by itself; API key: connection settings open |
+| Gemini sign-in fails | Google moved free and Google One accounts to Antigravity CLI: use an API key |
 
-## Voice commands
+## Notes for changes
 
-After the wake word:
-- 停止 / 取消 / 别说了: kill the task and stop speaking.
-- 新对话: start a fresh Claude session.
-- 打开/关闭摄像头, 看屏幕 / 停止看屏幕: turn snapshots on or off. A longer sentence such as "打开摄像头看看这是什么" also goes to Claude.
-- 谢谢 / 没事了: end the follow-up.
-
-Anything else goes to Claude. Commands spoken while Claude is busy are queued. The session id is in `app/.claude_session` (`claude --resume <id>` opens it in a terminal).
-
-`handle_rest()` in `voice_server.py` is the user's own unfinished exercise (rest mode). Leave it alone unless they ask for it.
+- Don't stop the mic stream in-process: `Pa_StopStream` can deadlock inside CoreAudio. Voice off re-execs the service.
+- Don't use Apple's VoiceProcessingIO (ducks other audio) or WebRTC AEC3 (squashes the voice).
+- Test as the app runs: a bare environment, not this shell's PATH.
+- `handle_rest()` in `voice_server.py` is the owner's unfinished exercise. Leave it.

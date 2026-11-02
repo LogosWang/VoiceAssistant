@@ -1,0 +1,19 @@
+Use the imagegen skill and built-in image_gen tool. Make these five images, one image_gen call each, and copy each result into the current directory under the given name. Do not write code.
+
+ref1, ref2 and ref3 are references for how light falls on a face. Do NOT copy the person in them. current.png is my own original character: she stays herself.
+
+One light for everything: a cool, dim light from the viewer's LEFT, slightly above. The left side of every form is lit, the right side falls into shadow. Keep the style, colours, framing and flat #FF00FF background of each source image.
+
+1. base.png: edit current.png. Keep her design, frontal pose, framing, hair shapes, hat and clothes.
+- Face: lit from the viewer's left. A soft cool light on the left cheek and left side of the forehead; the rest of the face, more than half of it, in one cool shadow tone, with a crisp, natural shadow edge running down the centre of the face and following the nose. Remove the isolated white diamond on the nose. The bridge of the nose is shown only by the lit left plane of the nose meeting the shadow, with at most a thin, soft light along it. It must look like form, not a sticker.
+- Eyes: keep the shape, the heavy upper lids and the gaze. The irises and pupils are a deep, dark blood red, muted, not glowing, with one small dull highlight on the left of each eye.
+- Mouth: keep the single short thin stroke.
+- Hat, hair, coat: same design, with lit edges on the left and darker on the right.
+
+2. eyes_closed.png: edit your new base.png. Change ONLY the eyes: gently closed, a simple curved dark lash line. Everything else identical.
+
+3. mouth_open.png: edit your new base.png. Change ONLY the mouth: the same stroke opened just a little into a very small simple dark shape, no lip outline, no teeth. Everything else identical.
+
+4. engine.png: edit engine_old.png. Keep its shape, position, proportions and every part exactly. Only relight it from the viewer's left: each cylinder and the boiler has a soft lit band towards its left side and goes dark on its right side, and the rims catch light on the left. Inside of each mouth stays very dark.
+
+5. piston.png: edit piston_old.png. Keep its shape, position and proportions exactly. Only relight it from the viewer's left: the left of the rod is lit, the right in shadow, in the same cold steel tones as the engine, not bright blue.

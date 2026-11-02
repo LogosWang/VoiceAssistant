@@ -7,10 +7,14 @@
 """
 import argparse
 import glob
+import json
 import os
 import re
+import shutil
+import signal
 import socket
 import subprocess
+import sys
 import threading
 import time
 import tomllib
@@ -20,6 +24,9 @@ import numpy as np
 import sherpa_onnx
 from pypinyin import lazy_pinyin
 
+import events
+import providers
+import shared
 from aec import EchoCanceller
 from claude_bridge import ClaudeBridge
 from tts import Speaker
@@ -32,6 +39,9 @@ KWS_DIR = os.path.join(MODELS, "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20") 
 ASR_DIR = os.path.join(MODELS, "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17")
 VAD_MODEL = os.path.join(MODELS, "silero_vad.onnx")
 PREROLL = int(0.4 * SR)  # audio kept from just before the wake word fired
+VOICE_FILE = os.path.join(HERE, ".voice_off")  # exists = voice mode off
+PARTIAL_EVERY = 0.6  # seconds between live subtitle updates while recording
+STATES = {"L": "listening", "S": "speaking", "B": "thinking", "I": "idle"}
 
 STOP_WORDS = ("停止", "取消", "别说了", "闭嘴", "停下", "安静")
 NEW_SESSION_WORDS = ("新对话", "新会话", "重新开始")
@@ -41,6 +51,9 @@ CAMERA_OFF = ("关闭摄像头", "关掉摄像头", "关摄像头", "关闭相�
 CAMERA_ON = ("打开摄像头", "开启摄像头", "开摄像头", "打开相机", "开启相机")
 SCREEN_OFF = ("停止看屏幕", "别看屏幕", "不用看屏幕", "不要看屏幕", "关闭屏幕共享", "停止屏幕共享", "关闭屏幕录制", "停止屏幕录制", "关掉屏幕录制")
 SCREEN_ON = ("看屏幕", "看我的屏幕", "看一下屏幕", "看看屏幕", "打开屏幕共享", "开启屏幕共享", "共享屏幕")
+SWITCH_WORDS = ("切换到", "切换成", "换成", "换到", "改用")
+PROVIDER_WORDS = {"claude": "claude", "克劳德": "claude", "chatgpt": "chatgpt", "gpt": "chatgpt", "gemini": "gemini",
+                  "zcode": "zcode", "智谱": "zcode", "deepseek": "deepseek", "豆包": "doubao"}
 BEEP_WAKE = "/System/Library/Sounds/Tink.aiff"
 BEEP_DONE = "/System/Library/Sounds/Pop.aiff"
 BEEP_CANCEL = "/System/Library/Sounds/Basso.aiff"
@@ -88,9 +101,23 @@ def strip_wake(text, names):
 
 class DryRunBridge:
     busy = False
+    name = "dry-run"
 
-    def submit(self, text):
-        log(f"[dry-run] would send to Claude: {text}")
+    def __init__(self):
+        self.provider = providers.current()
+
+    def submit(self, text, dirs=()):
+        log(f"[dry-run] would send to {self.provider}: {text} (dirs {list(dirs)})")
+
+    def switch(self, pid):
+        providers.set_current(pid)
+        self.provider = pid
+
+    def sign_in_now(self, pid):
+        log(f"[dry-run] would sign in to {pid}")
+
+    def sign_out(self, pid):
+        log(f"[dry-run] would sign out of {pid}")
 
     def mute(self): pass
     def stop(self): pass
@@ -112,6 +139,9 @@ class Assistant:
         self.recording = None
         self.history = np.zeros(0, np.float32)
         self.dc = 0.0
+        self.installing = False
+        self.voice_on = not os.path.exists(VOICE_FILE)
+        self.drop_recording = False  # typed input arrived: abandon the recording in progress
         self.resting = False  # rest mode: ignore commands until told to wake up
         self.follow_up_due = False   # reply finished: listen once more without the wake word
         self.skip_follow_up = False  # set by commands that end the conversation, cleared on next wake
@@ -145,11 +175,11 @@ class Assistant:
         self.speaker = Speaker(cfg["tts"], self.refresh_state)
         self.vision = Vision(cfg["vision"], log)
         self.aec = None
-        if cfg["aec"]["enabled"]:
-            try:
-                self.aec = EchoCanceller(cfg["aec"], log)
-            except Exception as e:
-                log(f"[aec] off: {e}")
+        self.aec_refused = False
+        if self.voice_on:
+            self._start_aec()
+        self.asr_lock = threading.Lock()
+        self.speaker.silent = not self.voice_on
         self.aec_warned = False
         self.aec_peak_since = None
         self.reply_audio = []
@@ -191,6 +221,7 @@ class Assistant:
                     and not self.skip_follow_up:
                 self.follow_up_due = True  # picked up by the audio thread in process()
             self.state = s
+            events.emit("state", state=STATES[s])
             if self.conn:
                 try:
                     self.conn.sendall(s.encode())
@@ -202,6 +233,8 @@ class Assistant:
     def feed(self, samples, t0=None):
         """Live audio entry point: removes what the Mac is playing, then processes.
         t0: host time the first sample was recorded (None: estimated from arrival)."""
+        if not self.voice_on:
+            return
         if self.aec:
             samples = self.aec.process(samples, t0)
             self._check_route()
@@ -226,6 +259,10 @@ class Assistant:
             self.aec_peak_since = None
 
     def process(self, samples):
+        if self.drop_recording:
+            self.drop_recording = False
+            if self.recording is not None:
+                self._end_recording()
         samples = samples * self.cfg["record"]["gain"]
         self.dc = 0.95 * self.dc + 0.05 * float(samples.mean())
         samples = samples - self.dc
@@ -284,7 +321,7 @@ class Assistant:
         self.skip_follow_up = False
         self.recording = {
             "audio": [preroll], "n": 0, "started": False, "start_timeout": start_timeout,
-            "follow_up": follow_up,
+            "follow_up": follow_up, "partial_at": 0.0, "partial_busy": False,
             "vad": sherpa_onnx.VoiceActivityDetector(self.vad_cfg, buffer_size_in_seconds=60),
             "pending": np.zeros(0, np.float32),
         }
@@ -305,6 +342,9 @@ class Assistant:
             elif r["started"]:
                 return self._finish()
         secs = r["n"] / SR
+        if events.enabled and r["started"] and not r["partial_busy"] and secs - r["partial_at"] >= PARTIAL_EVERY:
+            r["partial_at"], r["partial_busy"] = secs, True
+            threading.Thread(target=self._partial, args=(r, np.concatenate(r["audio"])), daemon=True).start()
         rc = self.cfg["record"]
         if not r["started"] and secs > r["start_timeout"]:
             log("[wake] no speech, back to standby")
@@ -314,6 +354,20 @@ class Assistant:
             self._end_recording()
         elif secs > rc["max_seconds"]:
             self._finish()
+
+    def _transcribe(self, audio):
+        with self.asr_lock:
+            s = self.asr.create_stream()
+            s.accept_waveform(SR, audio)
+            self.asr.decode_stream(s)
+            return s.result.text.strip()
+
+    def _partial(self, r, audio):
+        """Live subtitle while recording; off the audio thread, which must not fall behind."""
+        text = strip_wake(self._transcribe(audio), self.names)
+        r["partial_busy"] = False
+        if text and self.recording is r:
+            events.emit("user", text=text, final=False)
 
     def _end_recording(self):
         self.recording = None
@@ -339,13 +393,118 @@ class Assistant:
         self._save(audio, "command")
         self._end_recording()
         beep(BEEP_DONE)
-        s = self.asr.create_stream()
-        s.accept_waveform(SR, audio)
-        self.asr.decode_stream(s)
-        raw = s.result.text.strip()
+        raw = self._transcribe(audio)
         text = strip_wake(raw, self.names)
         log(f"[asr] {raw!r} -> {text!r}")
+        events.emit("user", text=text, final=True)
         self.handle(text)
+
+    def typed(self, text, paths=()):
+        """A command from the app's input box: treated like a transcript, but it never listens after."""
+        log(f"[typed] {text} {list(paths) or ''}")
+        events.emit("user", text=text + "".join(f" 📎{os.path.basename(p)}" for p in paths), final=True)
+        self.drop_recording = True
+        self.skip_follow_up = True
+        self.follow_up_due = False
+        self.bridge.mute()
+        self.speaker.stop()
+        if paths:  # goes straight to the AI: "停止" with a file attached isn't a stop command
+            self._submit(text or "请看附件。", paths)
+        else:
+            self.handle(text)
+
+    def set_voice(self, on):
+        """The voice button. Off: mic and system audio capture stop, replies are only shown as text."""
+        self.voice_on = on
+        if on:
+            if os.path.exists(VOICE_FILE):
+                os.remove(VOICE_FILE)
+        else:
+            open(VOICE_FILE, "w").close()
+            self.speaker.stop()
+        self.speaker.silent = not on
+        log(f"[voice] {'on' if on else 'off'}")
+        events.emit("voice", on=on)
+
+    def _start_aec(self):
+        if self.aec or self.aec_refused or not self.cfg["aec"]["enabled"]:
+            return
+        try:
+            self.aec = EchoCanceller(self.cfg["aec"], log)
+        except Exception as e:
+            self.aec_refused = True  # trying again would only bring up the system's dialog again
+            log(f"[aec] off: {e}")
+            events.emit("notice", text="回声消除未开启，请检查“屏幕与系统录音”权限")
+
+    def _restart_without_mic(self):
+        """Stopping a stream in-process can deadlock inside CoreAudio: Pa_StopStream waits on the HAL
+        lock while PortAudio's start/stop callback waits on the audio unit lock it holds. Replacing
+        the process lets the system release the mic. Same pid and pipes, so the app doesn't notice."""
+        log("[voice] restarting without the microphone")
+        if self.aec:
+            self.aec.close()
+        sys.stdout.flush()
+        os.execv(sys.executable, sys.orig_argv)
+
+    def _report_providers(self):
+        threading.Thread(target=lambda: events.emit("providers", **providers.statuses()), daemon=True).start()
+
+    def _read_commands(self):
+        """What the app sends on stdin, one JSON object per line. Keys must never reach a log."""
+        for line in sys.stdin:
+            m = json.loads(line)
+            kind = m.get("type")
+            try:
+                self._app_command(kind, m)
+            except Exception as e:
+                log(f"[app] {kind} failed: {type(e).__name__}")
+                events.emit("notice", text="操作失败，详情请看日志", hold=8000)
+            self._report_providers()
+
+    def _app_command(self, kind, m):
+        pid = m.get("provider")
+        if pid is not None and pid not in providers.PROVIDERS:
+            raise ValueError("unknown provider")
+        if kind == "providers":
+            return  # the status report after every command is the answer
+        if kind == "voice":
+            self.set_voice(bool(m.get("on")))
+            return
+        if kind == "text":
+            text, paths = m.get("text", "").strip(), m.get("paths", [])
+            if text or paths:
+                self.typed(text, paths)
+        elif kind == "use":
+            self.bridge.switch(pid)
+        elif kind == "set_key":
+            providers.set_key(pid, m["key"])
+            log(f"[provider] key saved for {pid}")
+        elif kind == "del_key":
+            providers.del_key(pid)
+            log(f"[provider] key removed for {pid}")
+        elif kind == "login":
+            self.bridge.sign_in_now(pid)
+        elif kind == "logout":
+            self.bridge.sign_out(pid)
+        elif kind == "install":
+            threading.Thread(target=self._install, args=(pid,), daemon=True).start()
+
+    def _install(self, pid):
+        package = providers.PROVIDERS[pid]["package"]
+        if not shutil.which("npm"):
+            log("[provider] install: npm not found")
+            events.emit("notice", text="安装需要 Node.js，请先在终端运行 brew install node", hold=15000)
+            return
+        if self.installing:  # a second click while it runs
+            return
+        self.installing = True
+        events.emit("notice", text=f"正在安装 {package}…", hold=180000)
+        r = subprocess.run(["npm", "install", "-g", package], capture_output=True, text=True)
+        self.installing = False
+        self.voice_on = not os.path.exists(VOICE_FILE)
+        log(f"[provider] install {package}: exit {r.returncode} {r.stderr[-300:]}")
+        events.emit("notice", text="安装完成" if r.returncode == 0 else "安装失败，详情请看日志", hold=8000)
+        self._report_providers()
 
     def handle_rest(self, short):
         """TODO(you): voice rest mode, see "动手练习" in README.md.
@@ -361,6 +520,8 @@ class Assistant:
             return
         if not short:
             self.speaker.say("没听清，请再说一遍")
+        elif self._switch_command(short):
+            pass
         elif self._vision_command(short, text):
             pass
         elif len(short) <= 5 and any(w in short for w in FOLLOW_UP_END):
@@ -377,6 +538,19 @@ class Assistant:
             self.speaker.say("好的，开始新对话")
         else:
             self._submit(text)
+
+    def _switch_command(self, short):
+        """切换到 DeepSeek / 换成豆包: pick the AI by voice."""
+        low = short.lower()
+        if len(low) > 16 or not any(w in low for w in SWITCH_WORDS):
+            return False
+        pid = next((v for k, v in PROVIDER_WORDS.items() if k in low), None)
+        if not pid:
+            return False
+        self.bridge.switch(pid)
+        self._report_providers()
+        self.speaker.say(f"好的，切换到 {providers.PROVIDERS[pid]['name']}")
+        return True
 
     def _vision_command(self, short, text):
         """Camera/screen on/off. A longer sentence ("打开摄像头看看这是什么") is also sent to Claude."""
@@ -406,12 +580,19 @@ class Assistant:
         else:
             self.speaker.say("摄像头已打开")
 
-    def _submit(self, text):
-        """Sends a command to Claude, with a snapshot from the camera/screen if either is on."""
+    def _submit(self, text, paths=()):
+        """Sends a command to the AI, with attachments and a camera/screen snapshot if any."""
         shots = self.vision.snapshot()
         if shots:
             text += "\n\n" + "\n".join(f"[{label}画面：{path}]" for label, path in shots)
-        self.bridge.submit(text)
+        dirs = []
+        for p in paths:
+            is_dir = os.path.isdir(p)
+            text += f"\n\n[附件{'文件夹' if is_dir else '文件'}：{p}]"
+            d = p if is_dir else os.path.dirname(p)
+            if d not in dirs:
+                dirs.append(d)
+        self.bridge.submit(text, dirs)
 
     # ---------- audio sources ----------
 
@@ -459,18 +640,36 @@ class Assistant:
     def serve_mic(self):
         import queue
         import sounddevice as sd
+        q = queue.Queue()
+        # the callback carries the hardware time of each block, which echo cancellation aligns on
+        cb = lambda data, frames, t, status: q.put((data[:, 0].copy(), t.inputBufferAdcTime))
+        stream = None
+        while True:
+            if self.voice_on and stream is None:
+                stream = self._open_mic(sd, cb)
+                self._start_aec()
+            elif not self.voice_on:
+                if self.recording is not None:
+                    self._end_recording()
+                self.follow_up_due = False
+                if stream is not None and not self.bridge.busy:  # a running task would die with the process
+                    self._restart_without_mic()
+            try:
+                block = q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            self.feed(*block)
+
+    def _open_mic(self, sd, cb):
         want = self.cfg.get("mic", {}).get("device", "")
         dev = next((i for i, d in enumerate(sd.query_devices())
                     if d["max_input_channels"] and want.lower() in d["name"].lower()), None) if want else None
         if want and dev is None:
             log(f"[mic] no input device matching {want!r}, using the system default")
         log(f"using microphone: {sd.query_devices(dev, kind='input')['name']}")
-        q = queue.Queue()
-        # the callback carries the hardware time of each block, which echo cancellation aligns on
-        cb = lambda data, frames, t, status: q.put((data[:, 0].copy(), t.inputBufferAdcTime))
-        with sd.InputStream(device=dev, samplerate=SR, channels=1, dtype="float32", blocksize=512, callback=cb):
-            while True:
-                self.feed(*q.get())
+        stream = sd.InputStream(device=dev, samplerate=SR, channels=1, dtype="float32", blocksize=512, callback=cb)
+        stream.start()
+        return stream
 
     def serve_wav(self, path):
         with wave.open(path) as w:
@@ -492,10 +691,29 @@ def main():
     ap.add_argument("--wav", help="feed a 16 kHz mono wav file")
     ap.add_argument("--dry-run", action="store_true", help="don't send commands to Claude")
     ap.add_argument("--save-dir", help="save every recording as a wav here (debugging)")
+    ap.add_argument("--ui", action="store_true", help="print events for the desktop UI on stdout")
     args = ap.parse_args()
     with open(args.config, "rb") as f:
         cfg = tomllib.load(f)
+    events.enabled = args.ui
+    if args.ui:
+        providers.fix_path()
     a = Assistant(cfg, args.dry_run, args.save_dir)
+    a.refresh_state()
+    signal.signal(signal.SIGTERM, signal.default_int_handler)  # the app quitting: clean up like Ctrl-C
+    if args.ui:
+        shared.seed_memory()
+        shared.sync_skills()
+        events.emit("voice", on=a.voice_on)
+        threading.Thread(target=a._read_commands, daemon=True).start()
+        a._report_providers()
+        # the app died without telling us: don't keep listening on the mic
+        parent = os.getppid()
+        def watch():
+            while os.getppid() == parent:
+                time.sleep(2)
+            os.kill(os.getpid(), signal.SIGTERM)
+        threading.Thread(target=watch, daemon=True).start()
     try:
         if args.wav:
             a.serve_wav(args.wav)
@@ -510,6 +728,8 @@ def main():
         a.vision.close()
         if a.aec:
             a.aec.close()
+        sys.stdout.flush()
+        os._exit(0)  # not through interpreter exit: closing the mic stream there can deadlock too
 
 
 if __name__ == "__main__":
