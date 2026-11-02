@@ -12,6 +12,10 @@ server/snapshots/
 server/.claude_session
 server/.session_*
 server/.provider
+server/.permission
 server/.voice_off
 
 .DS_Store
+
+# the installer package: too big for git, publish it as a GitHub Release
+dist/

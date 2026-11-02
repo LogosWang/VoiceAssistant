@@ -1,0 +1,52 @@
+#!/bin/bash
+# Runs as root at the end of the installer: moves the service into the signed-in user's Library,
+# then does what has to be done as that user. Nothing here may fail the install.
+# CARNOT_TEST_HOME runs it as a normal user against a scratch folder, doing none of the system steps.
+PAYLOAD="${CARNOT_TEST_PAYLOAD:-/Library/Application Support/Carnot/payload}"
+if [ -n "$CARNOT_TEST_HOME" ]; then
+  USER_NAME="$(id -un)"; USER_HOME="$CARNOT_TEST_HOME"
+else
+  USER_NAME="$(stat -f%Su /dev/console)"; USER_HOME="$(dscl . -read "/Users/$USER_NAME" NFSHomeDirectory | awk '{print $2}')"
+fi
+as_user() {
+  if [ -n "$CARNOT_TEST_HOME" ]; then "$@"
+  else launchctl asuser "$(id -u "$USER_NAME")" sudo -u "$USER_NAME" -H env HOME="$USER_HOME" PATH="$USER_HOME/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" "$@"; fi
+}
+DEST="$USER_HOME/Library/Application Support/Carnot"
+SERVER="$DEST/server"
+mkdir -p "$DEST"
+
+# an upgrade keeps the user's settings
+KEEP=""
+if [ -f "$SERVER/config.toml" ]; then KEEP="$(mktemp)"; cp "$SERVER/config.toml" "$KEEP"; fi
+rm -rf "$SERVER/.venv" "$SERVER/models"
+ditto "$PAYLOAD/server" "$SERVER"
+[ -z "$KEEP" ] || { cp "$KEEP" "$SERVER/config.toml"; rm -f "$KEEP"; }
+xattr -dr com.apple.quarantine "$DEST" 2>/dev/null
+if [ -z "$CARNOT_TEST_HOME" ]; then
+  chown -R "$USER_NAME" "$DEST"
+  rm -rf "/Library/Application Support/Carnot"
+  xattr -dr com.apple.quarantine /Applications/Carnot.app 2>/dev/null
+fi
+
+PY="$SERVER/.venv/bin/python"
+CARNOT_HOME_DIR="${CARNOT_HOME:-$USER_HOME/.carnot}"
+as_user mkdir -p "$CARNOT_HOME_DIR"
+as_user /bin/sh -c "printf '%s\n' \"\$1\" > \"\$2/server_dir\"" sh "$SERVER" "$CARNOT_HOME_DIR"
+as_user "$PY" "$SERVER/carnot_agent.py" seed >/dev/null 2>&1
+( cd "$SERVER" && as_user "$PY" -c "import shared; shared.ensure_persona()" ) >/dev/null 2>&1
+
+[ -z "$CARNOT_TEST_HOME" ] || exit 0
+
+as_user /Applications/Carnot.app/Contents/MacOS/Carnot --enable-login >/dev/null 2>&1
+
+for CODE in "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code" "$USER_HOME/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"; do
+  if [ -x "$CODE" ]; then as_user "$CODE" --install-extension "$SERVER/carnot.vsix" --force >/dev/null 2>&1; break; fi
+done
+
+if ! as_user /bin/zsh -ilc 'command -v claude' >/dev/null 2>&1 && [ ! -x "$USER_HOME/.local/bin/claude" ]; then
+  as_user /bin/bash -c 'curl -fsSL https://claude.ai/install.sh | bash' >/dev/null 2>&1
+fi
+
+as_user /usr/bin/open /Applications/Carnot.app
+exit 0

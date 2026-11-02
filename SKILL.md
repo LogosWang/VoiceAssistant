@@ -26,7 +26,9 @@ Needs macOS 13+, Xcode command line tools and Homebrew. The installer adds the r
 
 ## Install
 
-Run `./install.sh`. It takes a few minutes, mostly a 1 GB model download. It stops with a message if Xcode tools or Homebrew are missing: don't pipe a remote script into a shell for the user, point them at https://brew.sh.
+For a Mac without developer tools, use the self-contained `Carnot-Installer.pkg` (Apple silicon, macOS 14+; built by `packaging/build_pkg.sh`). It isn't notarized, so the first open needs System Settings > Privacy & Security > Open Anyway. It installs the service to `~/Library/Application Support/Carnot/server`.
+
+From source: run `./install.sh`. It takes a few minutes, mostly a 1 GB model download. It stops with a message if Xcode tools or Homebrew are missing: don't pipe a remote script into a shell for the user, point them at https://brew.sh.
 
 It builds `/Applications/Carnot.app`, signs it with a local certificate it creates in the login keychain (`Carnot Local Signing`), enables launch at login, and installs the extension if VS Code is present.
 
@@ -43,13 +45,13 @@ To test without acting on anything: `/Applications/Carnot.app/Contents/MacOS/Car
 | Want | Key |
 |---|---|
 | where the AI works | `[claude] workdir`, `add_dirs` |
-| what it may do unasked | `[claude] permission_mode`: `auto` by default; `bypassPermissions` never asks, and anyone within earshot can say the wake word |
+| what it may do unasked | Chosen in the connection settings, `auto` by default (`[claude] permission_mode` is only the starting point). `plan`, `acceptEdits`, `auto`, `bypassPermissions`; the last never asks, and anyone within earshot can say the wake word. No voice command changes it, on purpose |
 | which microphone | `[mic] device`, part of the name |
 | wakes on its own / misses you | `[wake] threshold` up / down, `score` |
 | another wake name | `[wake] name`, `pronunciations`, `asr_aliases` |
 | voice | `[tts] edge_voice`, `engine = "say"` for offline |
 
-AIs and API keys are in the app's connection settings (button on the left of the input box), or the extension's `Carnot: 连接设置`. The extension's `carnot.permissionMode` is separate and has no approval prompt: actions needing approval fail.
+AIs and API keys are in the app's connection settings (button on the left of the input box), or the extension's `Carnot: 连接设置`. The extension chooses separately, in its chat view (`carnot.permissionMode`), and has no approval prompt: actions needing approval fail.
 
 ## Memory and skills
 

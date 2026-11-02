@@ -219,7 +219,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
             p.ignoresMouseEvents = !(hit.contains(m) || bar.contains(m) || (self?.chipsShown == true && chips.contains(m)))
         }
 
-        let dir = Bundle.main.object(forInfoDictionaryKey: "CarnotServerDir") as? String ?? ""
+        let dir = ((Bundle.main.object(forInfoDictionaryKey: "CarnotServerDir") as? String ?? "") as NSString).expandingTildeInPath
         server = Server(dir: dir, args: serverArgs)
         server.onEvent = { [weak self] json in
             self?.send(json)

@@ -27,7 +27,7 @@ body{display:flex;flex-direction:column}
 #input{width:100%;min-height:58px;max-height:220px;resize:none;padding:6px 8px;border-radius:4px;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,var(--vscode-panel-border,transparent));font:inherit;outline:0}
 #input:focus{border-color:var(--vscode-focusBorder)}
 #row{display:flex;align-items:center;gap:5px;margin-top:5px}
-#row select{flex:0 1 auto;min-width:0;max-width:150px;padding:2px 4px;color:var(--vscode-dropdown-foreground);background:var(--vscode-dropdown-background);border:1px solid var(--vscode-dropdown-border,transparent);border-radius:3px;font:inherit}
+#row select{flex:0 1 auto;min-width:0;max-width:96px;padding:2px 4px;color:var(--vscode-dropdown-foreground);background:var(--vscode-dropdown-background);border:1px solid var(--vscode-dropdown-border,transparent);border-radius:3px;font:inherit}
 #row .sp{flex:1}
 button{font:inherit;cursor:pointer;border:0;border-radius:3px;padding:3px 9px;color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground)}
 button.main{color:var(--vscode-button-foreground);background:var(--vscode-button-background)}

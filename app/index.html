@@ -160,7 +160,9 @@ window.carnot = ev => {
   } else if (ev.type === "providers") {
     const p = ev.items.find(i => i.id === ev.current);
     $("prov").textContent = p.name; $("prov").classList.toggle("bad", !p.ready);
-    $("prov").title = p.ready ? "连接设置" : `${p.name} 还没连接，点这里设置`;
+    const open = ev.permission === "bypassPermissions";
+    $("prov").classList.toggle("bad", !p.ready || open);
+    $("prov").title = !p.ready ? `${p.name} 还没连接，点这里设置` : open ? "权限：完全放行。点这里更改" : "连接和权限设置";
   }
 };
 

@@ -9,7 +9,11 @@ macOS 桌面助手：屏幕上常驻一个人物，可以语音唤醒，也可�
 
 ## 安装
 
-需要 macOS 13 以上和 [Homebrew](https://brew.sh)。其余依赖由脚本安装，首次约需下载 1 GB 模型。
+**最简单：** 下载 `Carnot-Installer.pkg`，双击安装。不需要 Homebrew 或开发工具，语音模型和运行环境都在包里。要求 Apple 芯片的 Mac 和 macOS 14 以上。
+
+这个安装包没有经过 Apple 公证，第一次双击会被系统拦下。到"系统设置 → 隐私与安全性"，在页面下方点"仍要打开"，再输入密码。
+
+**从源码安装：** 需要 macOS 13 以上和 [Homebrew](https://brew.sh)。其余依赖由脚本安装，首次约需下载 1 GB 模型。
 
 ```bash
 git clone https://github.com/LogosWang/VoiceAssistant.git ~/.claude/skills/carnot-voice
@@ -39,9 +43,17 @@ App 默认开机自启，可以在菜单栏图标或右键人物的菜单里关�
 
 API Key 只存在本机钥匙串里。
 
+## 自己构建安装包
+
+```bash
+packaging/build_pkg.sh    # 生成 dist/Carnot-Installer.pkg
+```
+
+需要 Apple 芯片、Xcode 命令行工具和 Node，并且先运行过一次 `app/build.sh`（它会创建签名证书）。安装包约 200 MB，不要提交进 git，请作为 GitHub Release 发布。
+
 ## 需要知道
 
-- **权限：** 默认 `permission_mode = "auto"`，高风险操作会被拦下。改成 `bypassPermissions` 后，AI 可以不经确认执行任何操作，而旁边任何人都能喊唤醒词。
+- **权限：** 默认"自动"，常规操作自动进行，高风险操作会被拦下。在 App 的连接设置和 VS Code 聊天框里都可以切换（只读规划、可改文件、自动、完全放行），两边各自独立，从下一条指令开始生效。"完全放行"后 AI 可以不经确认执行任何操作，而旁边任何人都能喊唤醒词，切换时会要求确认；没有语音指令可以改权限。
 - **数据：** 指令、附件、记忆索引和 AI 打开的记忆文件，都会发给你选的那家 AI；回复文字默认由 edge-tts 转语音，会发给微软。
 - **屏幕录制图标：** 回声消除要读取系统音频，所以运行时菜单栏会显示录屏图标。点输入框上的麦克风按钮关闭语音模式后，麦克风和音频采集都会停止。
 - **记忆不跨电脑同步：** 换电脑要自己带上 `~/.carnot/memory`。

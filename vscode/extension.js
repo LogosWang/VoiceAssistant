@@ -9,6 +9,12 @@ const crypto = require("crypto");
 
 const KEEP_CHATS = 50;
 const CONTEXT_ON_SWITCH = 10;  // messages handed over when a chat moves to another AI
+const MODES = ["plan", "acceptEdits", "auto", "bypassPermissions"];
+
+function permissionMode() {
+  const set = vscode.workspace.getConfiguration("carnot").get("permissionMode");
+  return MODES.includes(set) ? set : "auto";  // "default" was offered once; Claude Code has no such mode
+}
 
 function serverDir() {
   const set = vscode.workspace.getConfiguration("carnot").get("serverDir");
@@ -81,6 +87,7 @@ class Chat {
     if (m.type === "send") return this.send(m.text, m.paths || [], m.skill, m.withFile);
     if (m.type === "stop") { if (this.child) this.child.kill("SIGTERM"); return; }
     if (m.type === "provider") { this.provider = m.id; await this.context.globalState.update("provider", m.id); return this.refresh(); }
+    if (m.type === "permission") return this.setPermission(m.mode);
     if (m.type === "attach") return this.pick();
     if (m.type === "connections") return this.connections();
   }
@@ -92,7 +99,21 @@ class Chat {
     this.status = status;
     this.skills = skills.items;
     this.post({ type: "state", provider: this.provider, providers: status.items, skills: skills.items,
-                messages: this.chat ? this.chat.messages : [], busy: !!this.child, file: this.fileLabel() });
+                messages: this.chat ? this.chat.messages : [], busy: !!this.child, file: this.fileLabel(), permission: permissionMode() });
+  }
+
+  async setPermission(mode) {
+    if (!MODES.includes(mode)) return;
+    if (mode === "bypassPermissions") {
+      if (!await this.confirmBypass()) return this.post({ type: "permission", mode: permissionMode() });
+    }
+    await vscode.workspace.getConfiguration("carnot").update("permissionMode", mode, vscode.ConfigurationTarget.Global);
+    this.post({ type: "permission", mode });
+  }
+
+  async confirmBypass() {
+    const yes = "确认放行";
+    return await vscode.window.showWarningMessage("完全放行后，AI 可以不经确认执行任何操作，包括删除文件和对外发送内容。确定吗？", { modal: true }, yes) === yes;
   }
 
   fileLabel() {
@@ -175,8 +196,7 @@ class Chat {
 
   async turn(chat, pid, prompt, dirs, reply, retried) {
     const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
-    const mode = vscode.workspace.getConfiguration("carnot").get("permissionMode");
-    const args = ["run", "--provider", pid, "--cwd", cwd, "--permission", mode];
+    const args = ["run", "--provider", pid, "--cwd", cwd, "--permission", permissionMode()];
     if (chat.sessions[pid]) args.push("--session", chat.sessions[pid]);
     for (const d of dirs) args.push("--dir", d);
     let done = null;

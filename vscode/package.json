@@ -2,7 +2,7 @@
   "name": "carnot",
   "displayName": "Carnot",
   "description": "Chat with Claude, ChatGPT, Gemini, ZCode, DeepSeek or Doubao in VS Code, with one memory and one set of skills shared with the Carnot app.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "carnot-local",
   "engines": { "vscode": "^1.90.0" },
   "categories": ["AI", "Chat"],
@@ -43,8 +43,8 @@
         "carnot.permissionMode": {
           "type": "string",
           "default": "auto",
-          "enum": ["default", "acceptEdits", "auto", "bypassPermissions"],
-          "description": "What the AI may do without asking. There is no way to answer a prompt here, so an action that would need approval fails instead. bypassPermissions lets it do anything."
+          "enum": ["plan", "acceptEdits", "auto", "bypassPermissions"],
+          "description": "What the AI may do without asking; also in the chat view. plan: reads only. acceptEdits: may edit files. auto: routine actions proceed, risky ones are blocked. bypassPermissions: anything, unasked. There is no way to answer a prompt here, so an action that would need approval fails instead."
         }
       }
     }

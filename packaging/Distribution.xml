@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<installer-gui-script minSpecVersion="2">
+  <title>Carnot</title>
+  <welcome file="welcome.txt" mime-type="text/plain"/>
+  <options customize="never" require-scripts="true" hostArchitectures="arm64"/>
+  <domains enable_localSystem="true"/>
+  <allowed-os-versions><os-version min="14.0"/></allowed-os-versions>
+  <choices-outline><line choice="default"><line choice="carnot"/></line></choices-outline>
+  <choice id="default"/>
+  <choice id="carnot" visible="false"><pkg-ref id="com.carnot.assistant.pkg"/></choice>
+  <pkg-ref id="com.carnot.assistant.pkg" version="__VERSION__">carnot-component.pkg</pkg-ref>
+</installer-gui-script>

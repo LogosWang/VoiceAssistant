@@ -3,7 +3,7 @@ const vs = acquireVsCodeApi();
 const log = document.getElementById("log"), bottom = document.getElementById("bottom");
 bottom.innerHTML = `<div id="menu" hidden></div><div id="chips"></div>
   <textarea id="input" placeholder="给 Carnot 发消息，输入 / 选择 skill，Enter 发送，Shift+Enter 换行"></textarea>
-  <div id="row"><select id="provider" title="使用的 AI"></select><button id="attach" title="附加文件或文件夹">＋ 附件</button><span class="sp"></span><button id="send" class="main">发送</button></div>`;
+  <div id="row"><select id="provider" title="使用的 AI"></select><select id="permission" title="AI 的权限，从下一条消息开始生效"><option value="plan">只读规划</option><option value="acceptEdits">可改文件</option><option value="auto">自动</option><option value="bypassPermissions">完全放行</option></select><button id="attach" title="附加文件或文件夹">＋ 附件</button><span class="sp"></span><button id="send" class="main">发送</button></div>`;
 const $ = id => document.getElementById(id);
 const input = $("input");
 let skills = [], paths = [], skill = null, withFile = true, file = "", busy = false, providers = [], current = null, live = null, menuIndex = 0;
@@ -162,10 +162,12 @@ input.addEventListener("keydown", e => {
 $("send").onclick = send;
 $("attach").onclick = () => vs.postMessage({ type: "attach" });
 $("provider").onchange = e => vs.postMessage({ type: "provider", id: e.target.value });
+$("permission").onchange = e => vs.postMessage({ type: "permission", mode: e.target.value });
 
 window.addEventListener("message", ({ data: m }) => {
   if (m.type === "state") {
     providers = m.providers; current = m.provider; skills = m.skills; file = m.file; drawProviders(); drawChips();
+    $("permission").value = m.permission;
     if (!busy) drawHistory(m.messages);
     setBusy(m.busy);
   } else if (m.type === "user") {
@@ -183,6 +185,8 @@ window.addEventListener("message", ({ data: m }) => {
   } else if (m.type === "attached") {
     for (const p of m.paths) if (!paths.includes(p)) paths.push(p);
     drawChips();
+  } else if (m.type === "permission") {
+    $("permission").value = m.mode;
   } else if (m.type === "file") {
     file = m.file; drawChips();
   } else if (m.type === "focus") {

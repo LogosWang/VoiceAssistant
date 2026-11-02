@@ -14,6 +14,11 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CURRENT_FILE = os.path.join(HERE, ".provider")
+PERMISSION_FILE = os.path.join(HERE, ".permission")
+# What the AI may do unasked, in Claude Code's words. Nobody can answer a prompt from here, so a
+# mode that would ask ("manual") is left out: it would only fail.
+PERMISSIONS = ("plan", "acceptEdits", "auto", "bypassPermissions")
+DEFAULT_PERMISSION = "auto"
 KEYCHAIN = "carnot-voice"
 CLAUDE_CODE = "@anthropic-ai/claude-code"
 
@@ -65,6 +70,23 @@ def current():
 def set_current(pid):
     with open(CURRENT_FILE, "w") as f:
         f.write(pid)
+
+
+def normalize_permission(mode):
+    return mode if mode in PERMISSIONS else DEFAULT_PERMISSION
+
+
+def current_permission(default=DEFAULT_PERMISSION):
+    """The choice made in the app, else the config file's."""
+    try:
+        return normalize_permission(open(PERMISSION_FILE).read().strip())
+    except OSError:
+        return normalize_permission(default)
+
+
+def set_permission(mode):
+    with open(PERMISSION_FILE, "w") as f:
+        f.write(normalize_permission(mode))
 
 
 def get_key(pid):

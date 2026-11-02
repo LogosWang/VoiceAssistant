@@ -35,8 +35,10 @@ gain = 1.0
 workdir = "~"
 # Extra directories Claude may touch.
 add_dirs = []
-# "bypassPermissions" = never asks, needed to finish tasks unattended.
+# The starting point; the app's connection settings can change it.
+# "plan" = reads and plans, changes nothing. "acceptEdits" = may also edit files.
 # "auto" = auto-approves routine actions but blocks risky ones (those then fail instead of asking).
+# "bypassPermissions" = never asks, and anyone within earshot can say the wake word.
 permission_mode = "auto"
 # Empty = whatever ~/.claude/settings.json says.
 model = "claude-opus-5-5"

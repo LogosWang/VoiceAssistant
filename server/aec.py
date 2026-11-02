@@ -61,8 +61,10 @@ class SpeexAEC:
     (noise suppression is kept at -1 dB, i.e. off in effect; it lives in the same stage)."""
 
     def __init__(self, tail_ms):
-        path = ctypes.util.find_library("speexdsp") or next(
-            (p for p in ("/opt/homebrew/lib/libspeexdsp.dylib", "/usr/local/lib/libspeexdsp.dylib")
+        path = next(
+            (p for p in (os.path.join(HERE, "lib", "libspeexdsp.dylib"),  # the installer package's own copy
+                         ctypes.util.find_library("speexdsp") or "",
+                         "/opt/homebrew/lib/libspeexdsp.dylib", "/usr/local/lib/libspeexdsp.dylib")
              if os.path.exists(p)), None)  # Apple silicon / Intel Homebrew
         if not path:
             raise RuntimeError("libspeexdsp not found, run: brew install speexdsp")

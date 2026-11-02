@@ -57,7 +57,7 @@ def main():
     r.add_argument("--provider", default=providers.current(), choices=list(providers.PROVIDERS))
     r.add_argument("--cwd", default=os.path.expanduser("~"))
     r.add_argument("--session")
-    r.add_argument("--permission", default="auto")
+    r.add_argument("--permission", default=providers.DEFAULT_PERMISSION)
     r.add_argument("--dir", action="append", default=[])
     for name in ("status", "skills", "seed"):
         sub.add_parser(name)

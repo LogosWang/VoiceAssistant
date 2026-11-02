@@ -43,27 +43,31 @@ class Agent:
 
     def command(self, dirs):
         p = providers.PROVIDERS[self.provider]
-        full = self.permission == "bypassPermissions"
+        mode = providers.normalize_permission(self.permission)
         sid = self.session
         cli = shutil.which(p["cli"]) or p["cli"]
         dirs = [shared.MEMORY_DIR] + dirs
         if p["engine"] == "codex":
             cmd = [cli, "exec"] + (["resume", sid] if sid else [])
             cmd += ["--json", "--skip-git-repo-check"]
-            if full:
+            if mode == "bypassPermissions":
                 cmd.append("--dangerously-bypass-approvals-and-sandbox")
-            elif not sid:
-                cmd += ["--sandbox", "workspace-write"] + [a for d in dirs for a in ("--add-dir", d)]
+            else:  # -c, because a resumed session takes no --sandbox or --add-dir
+                cmd += ["-c", 'sandbox_mode="%s"' % ("read-only" if mode == "plan" else "workspace-write")]
+                if mode != "plan":
+                    cmd += ["-c", "sandbox_workspace_write.writable_roots=" + json.dumps(dirs)]
+                if mode == "auto":
+                    cmd.append("--approve-for-me")
             return cmd + ["-"]
         if p["engine"] == "gemini":
             cmd = [cli, "-p", "", "--output-format", "stream-json", "--skip-trust"]
-            cmd += ["--yolo"] if full else ["--approval-mode", "auto_edit"]
+            cmd += ["--approval-mode", {"plan": "plan", "bypassPermissions": "yolo"}.get(mode, "auto_edit")]
             cmd += ["--include-directories", ",".join(dirs)]
             return cmd + (["--resume", sid] if sid else [])
         system = "\n\n".join(s for s in (self.system, shared.memory_prompt()) if s)
         # Claude Code's own per-project memory would split what's remembered
         cmd = [cli, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-               "--permission-mode", self.permission, "--append-system-prompt", system,
+               "--permission-mode", mode, "--append-system-prompt", system,
                "--settings", json.dumps({"autoMemoryEnabled": False})]
         model = p.get("model") or self.model
         if model:

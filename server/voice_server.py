@@ -447,7 +447,8 @@ class Assistant:
         os.execv(sys.executable, sys.orig_argv)
 
     def _report_providers(self):
-        threading.Thread(target=lambda: events.emit("providers", **providers.statuses()), daemon=True).start()
+        threading.Thread(target=lambda: events.emit("providers", permission=self.cfg["claude"]["permission_mode"],
+                                                    **providers.statuses()), daemon=True).start()
 
     def _read_commands(self):
         """What the app sends on stdin, one JSON object per line. Keys must never reach a log."""
@@ -476,6 +477,11 @@ class Assistant:
                 self.typed(text, paths)
         elif kind == "use":
             self.bridge.switch(pid)
+        elif kind == "permission":  # from the settings window only: there's no voice command for this
+            mode = providers.normalize_permission(m.get("mode"))
+            providers.set_permission(mode)
+            self.cfg["claude"]["permission_mode"] = mode
+            log(f"[permission] {mode}")
         elif kind == "set_key":
             providers.set_key(pid, m["key"])
             log(f"[provider] key saved for {pid}")
@@ -493,7 +499,7 @@ class Assistant:
         package = providers.PROVIDERS[pid]["package"]
         if not shutil.which("npm"):
             log("[provider] install: npm not found")
-            events.emit("notice", text="安装需要 Node.js，请先在终端运行 brew install node", hold=15000)
+            events.emit("notice", text="安装需要 Node.js，请先从 nodejs.org 安装，然后重启 Carnot", hold=15000)
             return
         if self.installing:  # a second click while it runs
             return
@@ -696,6 +702,7 @@ def main():
     with open(args.config, "rb") as f:
         cfg = tomllib.load(f)
     events.enabled = args.ui
+    cfg["claude"]["permission_mode"] = providers.current_permission(cfg["claude"].get("permission_mode"))
     if args.ui:
         providers.fix_path()
     a = Assistant(cfg, args.dry_run, args.save_dir)

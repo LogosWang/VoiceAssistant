@@ -21,10 +21,21 @@ button{background:#2c2620;color:#e8cf9b;border:1px solid var(--brass);border-rad
 button:hover{background:#3a3226}
 button.use{background:var(--wine);color:#fff;border-color:#a8505f}
 button.quiet{border-color:#57503f;color:var(--dim)}
+#perm{background:var(--row);border:1px solid rgba(196,154,82,.45);border-radius:3px;padding:10px 12px;margin-bottom:12px}
+#perm h2{font-size:15px;font-weight:600;margin:0 0 7px}
+.modes{display:flex;gap:5px}
+.modes button{flex:1;padding:6px 2px}
+.modes button.on{background:var(--wine);color:#fff;border-color:#a8505f}
+#permNote{color:var(--dim);font-size:12px;margin-top:7px;min-height:17px}
+#permConfirm{display:none;margin-top:8px;padding:8px 10px;border:1px solid #a8505f;border-radius:2px;background:#2a1519;font-size:12.5px}
+#permConfirm.on{display:block}
+#permConfirm div{margin-top:7px;display:flex;gap:6px}
 #msg{min-height:18px;color:#e8a06a;font-size:12.5px;margin-top:4px}
 </style></head><body><main>
 <h1>连接设置</h1>
 <p class="sub">选一家作为 Carnot 的大脑。API Key 只保存在这台 Mac 的钥匙串里。</p>
+<section id="perm"><h2>AI 的权限</h2><div class="modes" id="modes"></div><div id="permNote"></div>
+<div id="permConfirm">完全放行后，AI 可以不经确认执行任何操作，包括删除文件和对外发送内容；旁边任何人喊唤醒词，也能让它这样做。<div><button id="permYes" class="use">确认放行</button><button id="permNo" class="quiet">取消</button></div></div></section>
 <div id="list"></div><div id="msg"></div>
 </main>
 <script>
@@ -36,6 +47,12 @@ const NOTE = {
   deepseek: "填 DeepSeek 的 API Key，通过 Claude Code 运行。",
   doubao: "填火山方舟 Coding Plan 的 API Key，通过 Claude Code 运行。",
 };
+const MODES = [
+  ["plan", "只读规划", "只读文件和给出方案，不做任何修改。"],
+  ["acceptEdits", "可改文件", "可以读写文件，运行命令等其他操作会被拦下。"],
+  ["auto", "自动（推荐）", "常规操作自动进行，高风险操作会被拦下。"],
+  ["bypassPermissions", "完全放行", "不经确认执行任何操作，有风险。"],
+];
 const server = payload => window.webkit?.messageHandlers?.carnot?.postMessage({type: "server", payload});
 const link = url => window.webkit?.messageHandlers?.carnot?.postMessage({type: "open", url});
 const list = document.getElementById("list"), msg = document.getElementById("msg");
@@ -57,9 +74,28 @@ function build(p) {
   $(".get").onclick = () => link(p.key_url);
   list.appendChild(r); rows[p.id] = r; return r;
 }
+let permission = null;
+function drawModes() {
+  const box = document.getElementById("modes"); box.textContent = "";
+  for (const [id, label] of MODES) {
+    const b = document.createElement("button");
+    b.textContent = label; b.className = id === permission ? "on" : "quiet";
+    b.onclick = () => {
+      document.getElementById("permConfirm").classList.remove("on");
+      if (id === permission) return;
+      if (id === "bypassPermissions") document.getElementById("permConfirm").classList.add("on");
+      else server({type: "permission", mode: id});
+    };
+    box.append(b);
+  }
+  document.getElementById("permNote").textContent = (MODES.find(m => m[0] === permission) || ["", "", ""])[2] + " 从下一条指令开始生效。";
+}
+document.getElementById("permYes").onclick = () => { document.getElementById("permConfirm").classList.remove("on"); server({type: "permission", mode: "bypassPermissions"}); };
+document.getElementById("permNo").onclick = () => document.getElementById("permConfirm").classList.remove("on");
 window.carnot = ev => {
   if (ev.type === "notice") { msg.textContent = ev.text; return; }
   if (ev.type !== "providers") return;
+  if (ev.permission) { permission = ev.permission; drawModes(); }
   for (const p of ev.items) {
     const r = rows[p.id] || build(p), $ = s => r.querySelector(s);
     r.classList.toggle("cur", ev.current === p.id);
