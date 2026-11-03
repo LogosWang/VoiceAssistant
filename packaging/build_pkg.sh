@@ -43,6 +43,10 @@ step "System audio helper"
 mkdir -p "$SERVER/syscap"; cp server/syscap/main.swift "$SERVER/syscap/"
 swiftc -O -target "arm64-apple-macos$OS_MIN" -o "$SERVER/syscap/syscap" server/syscap/main.swift
 
+step "Video frame helper"
+mkdir -p "$SERVER/videoframes"; cp server/videoframes/main.swift "$SERVER/videoframes/"
+swiftc -O -target "arm64-apple-macos$OS_MIN" -o "$SERVER/videoframes/videoframes" server/videoframes/main.swift
+
 step "Speech models"
 M="$ROOT/server/models"; [ -e "$M/silero_vad.onnx" ] || M="${CARNOT_MODELS:-$M}"
 [ -e "$M/silero_vad.onnx" ] || { server/download_models.sh >/dev/null; M="$ROOT/server/models"; }

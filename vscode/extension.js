@@ -7,9 +7,10 @@ const os = require("os");
 const path = require("path");
 const crypto = require("crypto");
 
-const KEEP_CHATS = 50;
-const CONTEXT_ON_SWITCH = 10;  // messages handed over when a chat moves to another AI
-const MODES = ["plan", "acceptEdits", "auto", "bypassPermissions"];
+const MODES = ["plan", "manual", "acceptEdits", "auto", "bypassPermissions"];
+const DIFF_SCHEME = "carnot-diff";
+const EDIT_TOOLS = ["Edit", "MultiEdit", "Write"];
+const SKIP_FILES = "**/{node_modules,.git,.venv,venv,dist,build,__pycache__}/**";
 
 function permissionMode() {
   const set = vscode.workspace.getConfiguration("carnot").get("permissionMode");
@@ -23,8 +24,39 @@ function serverDir() {
   try { return fs.readFileSync(path.join(carnotHome, "server_dir"), "utf8").trim(); } catch { return ""; }
 }
 
+/** What the native diff view shows for text that isn't a file on disk. */
+const diffTexts = new Map();
+const diffProvider = { provideTextDocumentContent: uri => diffTexts.get(uri.toString()) ?? "" };
+let diffSeq = 0;
+function diffUri(name, text) {
+  const uri = vscode.Uri.from({ scheme: DIFF_SCHEME, path: "/" + name, query: String(++diffSeq) });
+  diffTexts.set(uri.toString(), text);
+  return uri;
+}
+
+/** Where the files on the system clipboard are; Finder may hand them over as file reference URLs. */
+function clipboardFiles() {
+  const script = `ObjC.import("AppKit");
+    const items = $.NSPasteboard.generalPasteboard.pasteboardItems, out = [];
+    for (let i = 0; i < items.count; i++) {
+      const url = items.objectAtIndex(i).stringForType("public.file-url");
+      if (url.js) out.push($.NSURL.URLWithString(url).filePathURL.path.js);
+    }
+    JSON.stringify(out)`;
+  return new Promise(resolve => cp.execFile("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { timeout: 5000 }, (err, stdout) => {
+    try { resolve(err ? [] : JSON.parse(stdout).filter(p => fs.existsSync(p))); } catch { resolve([]); }
+  }));
+}
+
+/** A preview of an edit means nothing once it has been answered. */
+function closePreviews() {
+  const stale = vscode.window.tabGroups.all.flatMap(g => g.tabs).filter(t =>
+    t.input instanceof vscode.TabInputTextDiff && t.input.modified.scheme === DIFF_SCHEME && t.label.includes("待确认"));
+  if (stale.length) vscode.window.tabGroups.close(stale, true);
+}
+
 /** Runs carnot_agent.py, calling onEvent for each JSON line. Resolves with the exit code. */
-function agent(args, { input = "", onEvent = () => {}, onSpawn = () => {} } = {}) {
+function agent(args, { input = "", keepOpen = false, onEvent = () => {}, onSpawn = () => {} } = {}) {
   return new Promise((resolve, reject) => {
     const dir = serverDir();
     const python = path.join(dir, ".venv", "bin", "python");
@@ -43,7 +75,8 @@ function agent(args, { input = "", onEvent = () => {}, onSpawn = () => {} } = {}
     child.stderr.on("data", d => { err += d; });
     child.on("error", reject);
     child.on("close", code => code === 0 || code === null ? resolve(code) : reject(new Error(err.slice(-400) || `exit ${code}`)));
-    child.stdin.end(input);
+    child.stdin.on("error", () => {});  // an answer can arrive just after it exits
+    if (keepOpen) child.stdin.write(input); else child.stdin.end(input);
   });
 }
 
@@ -54,11 +87,12 @@ async function agentResult(args, input) {
 }
 
 class Chat {
-  constructor(context) {
+  constructor(context, folder = null) {
     this.context = context;
-    this.view = null;
-    this.chats = context.globalState.get("chats", []);
-    this.chat = null;
+    this.folder = folder;  // an editor-tab chat works here; the sidebar one in the workspace
+    this.host = null;      // the sidebar view or the editor tab
+    this.conv = null;      // the open conversation: { id, title, client }
+    this.messages = [];
     this.child = null;
     this.provider = context.globalState.get("provider", null);
     this.pendingFiles = [];
@@ -67,7 +101,11 @@ class Chat {
   // ---------- webview ----------
 
   resolveWebviewView(view) {
-    this.view = view;
+    this.attach(view);
+  }
+
+  attach(view) {
+    this.host = view;
     const media = vscode.Uri.joinPath(this.context.extensionUri, "media");
     view.webview.options = { enableScripts: true, localResourceRoots: [media] };
     const nonce = crypto.randomBytes(16).toString("hex");
@@ -80,10 +118,27 @@ class Chat {
     view.webview.onDidReceiveMessage(m => this.handle(m).catch(e => this.post({ type: "error", text: e.message })));
   }
 
-  post(m) { if (this.view) this.view.webview.postMessage(m); }
+  post(m) { if (this.host) this.host.webview.postMessage(m); }
 
   async handle(m) {
-    if (m.type === "ready") return this.refresh();
+    if (m.type === "ready") { await this.importOldChats(); return this.refresh(); }
+    if (m.type === "permissionAnswer") return this.answer(m);
+    if (m.type === "previewEdit") return this.previewEdit(m.tool, m.input);
+    if (m.type === "viewChange") return this.viewChange(m);
+    if (m.type === "undoFile") return this.undo(m, [m.path]);
+    if (m.type === "undoTurn") return this.undo(m, null);
+    if (m.type === "rewind") return this.rewind(m.ordinal);
+    if (m.type === "mention") return this.mention(m.q);
+    if (m.type === "pasteFiles") return this.pasteFiles();
+    if (m.type === "pasteImage") return this.pasteImage(m.data, m.mime);
+    if (m.type === "dropped") return this.dropped(m.uris);
+    if (m.type === "copy") return vscode.env.clipboard.writeText(m.text);
+    if (m.type === "openFile") return this.openFile(m.path, m.line);
+    if (m.type === "openSession") return this.open(m.id);
+    if (m.type === "renameSession") return this.rename(m.id, m.title);
+    if (m.type === "deleteSession") return this.remove(m.id, m.title);
+    if (m.type === "newChat") return this.newChat();
+    if (m.type === "history") return this.history();
     if (m.type === "send") return this.send(m.text, m.paths || [], m.skill, m.withFile);
     if (m.type === "stop") { if (this.child) this.child.kill("SIGTERM"); return; }
     if (m.type === "provider") { this.provider = m.id; await this.context.globalState.update("provider", m.id); return this.refresh(); }
@@ -95,11 +150,12 @@ class Chat {
   async refresh() {
     const status = await agentResult(["status"]);
     const skills = await agentResult(["skills"]);
+    const commands = await agentResult(["commands"]);
     if (!this.provider) this.provider = status.current;
     this.status = status;
     this.skills = skills.items;
-    this.post({ type: "state", provider: this.provider, providers: status.items, skills: skills.items,
-                messages: this.chat ? this.chat.messages : [], busy: !!this.child, file: this.fileLabel(), permission: permissionMode() });
+    this.post({ type: "state", provider: this.provider, providers: status.items, skills: skills.items, commands: commands.items,
+                messages: this.messages, conv: this.conv, busy: !!this.child, file: this.fileLabel(), permission: permissionMode() });
   }
 
   async setPermission(mode) {
@@ -109,6 +165,118 @@ class Chat {
     }
     await vscode.workspace.getConfiguration("carnot").update("permissionMode", mode, vscode.ConfigurationTarget.Global);
     this.post({ type: "permission", mode });
+  }
+
+  workdir() {
+    return this.folder || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
+  }
+
+  // ---------- questions from the AI, answered here ----------
+
+  answer(m) {
+    if (!this.child) return;
+    const { type, ...reply } = m;
+    this.child.stdin.write(JSON.stringify(reply) + "\n");
+    closePreviews();
+  }
+
+  /** Never on top of this chat: a chat in a tab keeps its group, diffs use the next one. */
+  diffColumn() {
+    const column = this.host && this.host.viewColumn;
+    return column === vscode.ViewColumn.One ? vscode.ViewColumn.Two : vscode.ViewColumn.One;
+  }
+
+  /** What a pending edit would do, in VS Code's own diff view. */
+  async previewEdit(tool, input) {
+    const file = path.isAbsolute(input.file_path) ? input.file_path : path.join(this.workdir(), input.file_path);
+    let now = "";
+    try { now = fs.readFileSync(file, "utf8"); } catch { /* a new file */ }
+    let next = now;
+    const apply = e => { next = e.replace_all ? next.split(e.old_string).join(e.new_string) : next.replace(e.old_string, () => e.new_string); };
+    if (tool === "Write") next = input.content ?? "";
+    else if (tool === "MultiEdit") (input.edits || []).forEach(apply);
+    else apply(input);
+    const name = path.basename(file);
+    await vscode.commands.executeCommand("vscode.diff", diffUri(name, now), diffUri(name, next), `${name}（待确认的改动）`,
+      { preview: true, preserveFocus: true, viewColumn: this.diffColumn() });
+  }
+
+  /** A turn's change to one file: the snapshot from before it against the file as it is now. */
+  async viewChange({ cwd, before, path: rel, status }) {
+    const old = status === "A" ? "" : (await agentResult(["cp-show", "--cwd", cwd, before, rel])).text;
+    const full = path.join(cwd, rel), name = path.basename(rel);
+    const right = fs.existsSync(full) ? vscode.Uri.file(full) : diffUri(name, "");
+    await vscode.commands.executeCommand("vscode.diff", diffUri(name, old), right, `${name}（这一轮的改动）`, { preview: true, viewColumn: this.diffColumn() });
+  }
+
+  async undo({ cwd, before, card }, paths) {
+    if (!paths) {
+      const yes = "撤销";
+      const pick = await vscode.window.showWarningMessage("把这一轮改动的文件全部恢复到这一轮之前？之后你手动做的修改也会被覆盖。", { modal: true }, yes);
+      if (pick !== yes) return;
+    }
+    const r = await agentResult(["cp-restore", "--cwd", cwd, before, ...(paths || [])]);
+    this.post({ type: "undone", card, paths: r.restored });
+  }
+
+  /** Back to before one of your messages: the code, the conversation, or both. */
+  async rewind(ordinal) {
+    if (this.child || !this.conv) return;
+    const h = (await agentResult(["history", this.conv.id])).messages;
+    let seen = -1, at = -1;
+    h.some((m, i) => { if (m.role === "user" && ++seen === ordinal) { at = i; return true; } return false; });
+    if (at < 0) return;
+    const point = h.slice(at + 1).find(m => m.checkpoint)?.checkpoint;
+    const both = "代码和对话", talk = "仅对话", code = "仅代码";
+    const buttons = point ? [both, talk, code] : [talk];
+    const pick = await vscode.window.showWarningMessage("回退到这条消息之前？", { modal: true, detail: point ? "代码会恢复到当时的状态，之后的修改（包括你手动改的）都会被覆盖。" : "这之后没有文件改动，只回退对话。" }, ...buttons);
+    if (!pick) return;
+    if (pick !== talk && point) await agentResult(["cp-restore", "--cwd", point.cwd, point.before]);
+    if (pick !== code) {
+      await agentResult(["rewind", this.conv.id, String(at - h.length)]);  // from the end: the list shown can be a tail
+      await this.open(this.conv.id);
+      this.post({ type: "setInput", text: h[at].text });
+    }
+    else vscode.window.showInformationMessage("代码已恢复，对话保持不变。");
+  }
+
+  // ---------- what can go in the box ----------
+
+  async mention(q) {
+    const seen = new Set(), items = [];
+    const add = uri => {
+      if (uri.scheme !== "file" || seen.has(uri.fsPath)) return;
+      seen.add(uri.fsPath);
+      items.push({ path: uri.fsPath, label: vscode.workspace.asRelativePath(uri, false) });
+    };
+    const clean = q.replace(/[{}[\]*?]/g, "");
+    for (const t of vscode.window.tabGroups.all.flatMap(g => g.tabs)) {
+      const uri = t.input && t.input.uri;
+      if (uri && (!clean || uri.fsPath.toLowerCase().includes(clean.toLowerCase()))) add(uri);
+    }
+    const base = new vscode.RelativePattern(this.workdir(), clean ? `**/*${clean}*` : "**/*");
+    (await vscode.workspace.findFiles(base, SKIP_FILES, 30)).forEach(add);
+    this.post({ type: "mentions", q, items: items.slice(0, 30) });
+  }
+
+  async pasteFiles() {
+    const paths = await clipboardFiles();
+    this.post(paths.length ? { type: "attached", paths } : { type: "noPastedFiles" });
+  }
+
+  pasteImage(data, mime) {
+    const home = process.env.CARNOT_HOME || path.join(os.homedir(), ".carnot");
+    const dir = path.join(home, "inbox", "vscode");
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const ext = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/heic": "heic", "image/heif": "heif", "image/tiff": "tiff" }[mime] || "png";
+    const file = path.join(dir, `${new Date().toISOString().replace(/[:.]/g, "-")}-${crypto.randomBytes(3).toString("hex")}.${ext}`);
+    fs.writeFileSync(file, Buffer.from(data, "base64"));
+    this.post({ type: "attached", paths: [file] });
+  }
+
+  dropped(uris) {
+    const paths = uris.map(u => { try { return vscode.Uri.parse(u).fsPath; } catch { return null; } }).filter(p => p && fs.existsSync(p));
+    if (paths.length) this.post({ type: "attached", paths });
   }
 
   async confirmBypass() {
@@ -134,33 +302,64 @@ class Chat {
     if (picked) this.post({ type: "attached", paths: picked.map(u => u.fsPath) });
   }
 
-  // ---------- chats ----------
+  // ---------- conversations, shared with the app and the bots ----------
+
+  /** Chats from when the extension kept its own come into the shared list, once. */
+  async importOldChats() {
+    const old = this.context.globalState.get("chats", []);
+    if (!old.length) return;
+    await agentResult(["import-chats"], JSON.stringify(old));
+    await this.context.globalState.update("chats", undefined);
+  }
 
   newChat() {
     if (this.child) this.child.kill("SIGTERM");
-    this.chat = null;
+    this.conv = null;
+    this.messages = [];
     return this.refresh();
   }
 
+  /** The list of every conversation, from any client, in the chat view. */
   async history() {
-    const pick = await vscode.window.showQuickPick(
-      this.chats.map(c => ({ label: c.title, description: new Date(c.at).toLocaleString(), chat: c })),
-      { placeHolder: "选择要继续的对话" });
-    if (pick) { this.chat = pick.chat; await this.refresh(); }
+    const list = await agentResult(["sessions"]);
+    this.post({ type: "historyList", items: list.items, open: this.conv && this.conv.id });
   }
 
-  save() {
-    this.chat.at = Date.now();
-    this.chats = [this.chat, ...this.chats.filter(c => c.id !== this.chat.id)].slice(0, KEEP_CHATS);
-    return this.context.globalState.update("chats", this.chats);
+  async open(id) {
+    if (this.child) return this.post({ type: "error", text: "当前回答还没结束，停止后再切换。" });
+    const h = await agentResult(["history", id]);
+    const list = await agentResult(["sessions"]);
+    this.conv = list.items.find(i => i.id === id) || { id, title: h.title };
+    this.messages = h.messages;
+    await this.refresh();
+  }
+
+  async rename(id, title) {
+    const next = await vscode.window.showInputBox({ prompt: "重命名这个对话", value: title });
+    if (!next) return;
+    await agentResult(["session-rename", id, next]);
+    if (this.conv && this.conv.id === id) { this.conv.title = next; await this.refresh(); }
+    return this.history();
+  }
+
+  async remove(id, title) {
+    const yes = "删除";
+    const pick = await vscode.window.showWarningMessage(`删除“${title}”？之后不能再继续这个对话。`, { modal: true }, yes);
+    if (pick !== yes) return;
+    await agentResult(["session-delete", id]);
+    if (this.conv && this.conv.id === id) await this.newChat();
+    return this.history();
   }
 
   // ---------- a turn ----------
 
   async send(text, paths, skill, withFile) {
     if (this.child) return;
-    if (!this.chat) this.chat = { id: crypto.randomUUID(), title: text.slice(0, 40) || "新对话", messages: [], sessions: {}, lastProvider: null, at: Date.now() };
-    const chat = this.chat, pid = this.provider;
+    if (!this.conv) {
+      const made = await agentResult(["session-new"]);
+      this.conv = { id: made.id, title: text.slice(0, 28) || "新对话", client: "vscode" };
+    }
+    const pid = this.provider;
     let prompt = text || "请看附件。";
     const dirs = [];
     for (const p of paths) {
@@ -170,54 +369,58 @@ class Chat {
       if (!dirs.includes(d)) dirs.push(d);
     }
     if (withFile) prompt += this.fileNote();
+    const shown = prompt;
     if (skill) {
       const s = (this.skills || []).find(x => x.name === skill);
       if (s) prompt = `[请按这个 skill 的说明完成任务：${s.name}，说明文件：${s.path}，先读取它]\n\n${prompt}`;
     }
-    // Each CLI has its own session, so moving to another AI hands over the recent messages.
-    if (chat.lastProvider && chat.lastProvider !== pid && !chat.sessions[pid] && chat.messages.length) {
-      const recent = chat.messages.slice(-CONTEXT_ON_SWITCH).map(m => `${m.role === "user" ? "用户" : "AI"}：${m.text}`).join("\n\n");
-      prompt = `以下是这段对话之前的内容，由另一个 AI 回答，请接着继续：\n\n${recent}\n\n---\n\n${prompt}`;
-    }
-    chat.messages.push({ role: "user", text, paths, skill });
-    const reply = { role: "assistant", text: "", tools: [], provider: pid };
-    chat.messages.push(reply);
+    this.messages.push({ role: "user", text, paths, skill });
+    const reply = { role: "assistant", text: "", parts: [], provider: pid };
+    this.messages.push(reply);
     this.post({ type: "user", text, paths, skill });
     this.post({ type: "busy", on: true, provider: pid });
     try {
-      await this.turn(chat, pid, prompt, dirs, reply, false);
+      await this.turn(pid, prompt, shown, dirs, reply, false);
     } finally {
-      chat.lastProvider = pid;
       this.child = null;
-      await this.save();
+      closePreviews();
       this.post({ type: "busy", on: false });
     }
   }
 
-  async turn(chat, pid, prompt, dirs, reply, retried) {
-    const cwd = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
-    const args = ["run", "--provider", pid, "--cwd", cwd, "--permission", permissionMode()];
-    if (chat.sessions[pid]) args.push("--session", chat.sessions[pid]);
+  async turn(pid, prompt, shown, dirs, reply, retried) {
+    const cwd = this.workdir();
+    const args = ["run", "--provider", pid, "--cwd", cwd, "--permission", permissionMode(), "--conversation", this.conv.id];
+    if (retried) args.push("--retry");
     for (const d of dirs) args.push("--dir", d);
     let done = null;
     await agent(args, {
-      input: prompt,
+      input: JSON.stringify({ text: prompt, shown }) + "\n",
+      keepOpen: true,
       onSpawn: c => { this.child = c; },
       onEvent: e => {
-        if (e.type === "text") { reply.text += e.text; this.post({ type: "delta", text: e.text }); }
-        else if (e.type === "tool") { reply.tools.push(e); this.post({ type: "tool", name: e.name, detail: e.detail }); }
-        else if (e.type === "session") chat.sessions[pid] = e.id;
-        else if (e.type === "done") done = e;
+        if (e.type === "text") {
+          reply.text += e.text;
+          const last = reply.parts[reply.parts.length - 1];
+          if (last && last.type === "text") last.text += e.text; else reply.parts.push({ type: "text", text: e.text });
+          this.post({ type: "delta", text: e.text });
+        } else if (e.type === "step") {
+          this.applyStep(reply, e);
+          this.post({ type: "step", step: e });
+        } else if (e.type === "permission") {
+          this.post({ type: "permission", request: e });
+          if (EDIT_TOOLS.includes(e.tool) && e.input.file_path) this.previewEdit(e.tool, e.input).catch(() => {});
+        } else if (e.type === "checkpoint") {
+          reply.checkpoint = e;
+          this.post({ type: "checkpoint", point: e });
+        }
+        else if (e.type === "done") { done = e; this.child && this.child.stdin.end(); }
       },
     });
     if (!done) return;
-    if (done.session) chat.sessions[pid] = done.session;
-    if (done.status === "no_conversation" && !retried) {
-      delete chat.sessions[pid];
-      return this.turn(chat, pid, prompt, dirs, reply, true);
-    }
+    if (done.status === "no_conversation" && !retried) return this.turn(pid, prompt, shown, dirs, reply, true);
     if (done.status === "auth" && !retried) {
-      if (await this.signIn(pid)) return this.turn(chat, pid, prompt, dirs, reply, true);
+      if (await this.signIn(pid)) return this.turn(pid, prompt, shown, dirs, reply, true);
       return this.fail(reply, "登录或 API Key 无效，请在连接设置里更新。");
     }
     if (done.status === "auth") return this.fail(reply, "登录之后还是连不上。");
@@ -226,6 +429,32 @@ class Chat {
       return this.connections();
     }
     if (done.status === "failed") this.fail(reply, `执行失败：${done.detail}`);
+  }
+
+  async openFile(file, line) {
+    const full = path.isAbsolute(file) ? file : path.join(this.folder || vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir(), file);
+    const doc = await vscode.window.showTextDocument(vscode.Uri.file(full), { preview: true, viewColumn: vscode.ViewColumn.One });
+    if (line) {
+      const at = new vscode.Position(Math.max(0, line - 1), 0);
+      doc.selection = new vscode.Selection(at, at);
+      doc.revealRange(new vscode.Range(at, at), vscode.TextEditorRevealType.InCenter);
+    }
+  }
+
+  /** Keeps the message in order, as the page shows it, so it can be drawn again. */
+  applyStep(reply, e) {
+    const parts = reply.parts;
+    if (e.kind === "thinking") {
+      const last = parts[parts.length - 1];
+      if (last && last.type === "thinking") last.text += e.text; else parts.push({ type: "thinking", text: e.text });
+    } else if (e.kind === "usage") {
+      reply.usage = e;
+    } else if (e.kind === "tool_start") {
+      parts.push({ type: "tool", id: e.id, name: e.name, input: e.input });
+    } else if (e.kind === "tool_end") {
+      const t = parts.find(p => p.type === "tool" && p.id === e.id);
+      if (t) Object.assign(t, { output: e.output, error: e.error, patch: e.patch, done: true });
+    }
   }
 
   fail(reply, text) {
@@ -289,10 +518,38 @@ class Chat {
   }
 }
 
+/** The folder of the file being edited: its workspace folder if it has one, else where it is. */
+function currentFolder() {
+  const uri = vscode.window.activeTextEditor?.document.uri;
+  if (uri && uri.scheme === "file") {
+    const wf = vscode.workspace.getWorkspaceFolder(uri);
+    return wf ? wf.uri.fsPath : path.dirname(uri.fsPath);
+  }
+  return vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || os.homedir();
+}
+
 function activate(context) {
   const chat = new Chat(context);
+  const tabs = new Set();
+  const openHere = () => {
+    const folder = currentFolder();
+    const panel = vscode.window.createWebviewPanel("carnot.tab", `Carnot · ${path.basename(folder) || folder}`, vscode.ViewColumn.Beside,
+      { enableScripts: true, retainContextWhenHidden: true });
+    panel.iconPath = vscode.Uri.joinPath(context.extensionUri, "media", "editor-icon.svg");
+    const tab = new Chat(context, folder);
+    tab.attach(panel);
+    tabs.add(tab);
+    panel.onDidDispose(() => {
+      tabs.delete(tab);
+      tab.host = null;
+      if (tab.child) tab.child.kill("SIGTERM");
+    });
+    return tab;
+  };
   const reg = (name, fn) => context.subscriptions.push(vscode.commands.registerCommand(name, fn));
+  context.subscriptions.push(vscode.workspace.registerTextDocumentContentProvider(DIFF_SCHEME, diffProvider));
   context.subscriptions.push(vscode.window.registerWebviewViewProvider("carnot.chat", chat, { webviewOptions: { retainContextWhenHidden: true } }));
+  reg("carnot.openHere", openHere);
   reg("carnot.newChat", () => chat.newChat());
   reg("carnot.history", () => chat.history());
   reg("carnot.connections", () => chat.connections());
@@ -304,8 +561,10 @@ function activate(context) {
     await vscode.commands.executeCommand("carnot.chat.focus");
     chat.post({ type: "focus", withFile: true });
   });
-  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => chat.post({ type: "file", file: chat.fileLabel() })));
-  return { chat, agent, agentResult };
+  context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => {
+    for (const c of [chat, ...tabs]) c.post({ type: "file", file: c.fileLabel() });
+  }));
+  return { chat, tabs, agent, agentResult };
 }
 
 module.exports = { activate, deactivate() {} };

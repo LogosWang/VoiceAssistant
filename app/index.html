@@ -18,10 +18,11 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-famil
 #inputbar button{flex:none;height:30px;border:1px solid var(--brass);background:#2c2620;color:#e0bf7c;cursor:pointer;font:13px "Songti SC","PingFang SC",serif}
 #prov{max-width:58px;padding:0 7px;border-radius:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #prov.bad{color:#e8a06a;border-color:#a8505f}
-#attach,#sendbtn,#voice{width:30px;border-radius:50%;padding:0}
-#voice{display:flex;align-items:center;justify-content:center}
-#voice svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:none}
+#attach,#sendbtn,#voice,#tasks{width:30px;border-radius:50%;padding:0}
+#voice,#tasks{display:flex;align-items:center;justify-content:center}
+#voice svg,#tasks svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:none}
 #voice .slash{display:none}
+#inputbar:has(#input:not(:placeholder-shown)) #tasks{display:none}
 #voice.off{color:#8f8676;border-color:#57503f;background:#1c1a1e}
 #voice.off .slash{display:inline}
 #chips{position:fixed;left:4px;right:4px;bottom:52px;z-index:6;display:flex;flex-wrap:nowrap;overflow:hidden;justify-content:center;gap:4px}
@@ -31,11 +32,12 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-famil
 #char{position:fixed;left:50%;bottom:52px;margin-left:-160px;width:320px;height:416px;transform:scale(.62);transform-origin:50% 100%}
 #char img{position:absolute;display:block;pointer-events:none}
 #engine,#engineFront{left:0;top:70px;width:320px}
-.rod{width:42.1px;top:15.2px;animation:stroke 1.05s ease-in-out infinite alternate;animation-play-state:paused}
+.rod{width:42.1px;top:15.2px}
 #rodL{left:33.7px}
-#rodR{left:269.7px;animation-delay:-1.05s}
-@keyframes stroke{from{transform:translateY(0)}to{transform:translateY(46px)}}
-[data-state=thinking] .rod{animation-play-state:running}
+#rodR{left:269.7px;}
+/* the engine's output: beam, connecting rod, crank on a flywheel. Moved by the script below. */
+#beam,#wheel,#pedestal{position:absolute;display:block}
+.seg{position:absolute;box-sizing:border-box;border-style:solid;border-color:transparent;border-image:url(art/conrod.webp) 60 0 fill;transform-origin:50% 0}
 #figure{position:absolute;left:21px;bottom:0;width:277px;height:416px;transform-origin:50% 100%;transition:transform .8s cubic-bezier(.35,0,.25,1);animation:breathe 4.6s ease-in-out infinite}
 #figure img{position:absolute}
 #base{left:0;top:0;width:100%;height:100%}
@@ -70,6 +72,12 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-famil
   <img class="rod" id="rodL" src="art/piston.webp" alt="">
   <img class="rod" id="rodR" src="art/piston.webp" alt="">
   <img id="engineFront" src="art/engine_front.webp" alt="">
+  <img id="pedestal" src="art/pedestal.webp" alt="">
+  <img id="wheel" src="art/flywheel.webp" alt="">
+  <img id="beam" src="art/beam.webp" alt="">
+  <div class="seg" id="linkL"></div>
+  <div class="seg" id="linkR"></div>
+  <div class="seg" id="conrod"></div>
   <div id="steam"></div>
   <div id="figure">
     <img id="base" src="art/char.webp" alt="">
@@ -79,7 +87,7 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-famil
   <div id="hint"><span>z</span> <span>z</span></div>
 </div></div>
 <div id="chips"></div>
-<form id="inputbar"><button id="prov" type="button" title="连接设置">Claude</button><button id="voice" type="button" title="语音模式：开"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path class="slash" d="M4 3l16 18"/></svg></button><button id="attach" type="button" title="附加文件或文件夹">＋</button><input id="input" placeholder="写给 Carnot…" autocomplete="off" spellcheck="false"><button id="sendbtn" type="submit">➤</button></form>
+<form id="inputbar"><button id="prov" type="button" title="连接设置">Claude</button><button id="voice" type="button" title="语音模式：开"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path class="slash" d="M4 3l16 18"/></svg></button><button id="tasks" type="button" title="定时任务"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg></button><button id="attach" type="button" title="附加文件或文件夹">＋</button><input id="input" placeholder="写给 Carnot…" autocomplete="off" spellcheck="false"><button id="sendbtn" type="submit">➤</button></form>
 <script>
 const $ = id => document.getElementById(id);
 const stage = $("stage");
@@ -111,6 +119,69 @@ setInterval(() => {                         // a plausible flap; the audio isn't
   else if (mouth.style.opacity !== "0") mouth.style.opacity = 0;
 }, 105);
 
+// ---------- the engine: a real linkage, so every joint stays joined ----------
+// The flywheel's angle fixes the crank pin; the rod and the beam's reach fix the beam's angle (two
+// circles meeting); the beam fixes both pistons. It only turns while she is thinking.
+const ROD_L = $("rodL"), ROD_R = $("rodR");
+const rodX = el => el.offsetLeft + el.offsetWidth / 2;
+const ROD_TOP = ROD_L.offsetTop;
+const MECH = (() => {
+  const xl = rodX(ROD_L), xr = rodX(ROD_R), arm = (xr - xl) / 2, link = 24;
+  const px = (xl + xr) / 2, py = ROD_TOP + 23 - link;             // the beam's pivot, behind the hat
+  const reach = 165, crank = 32, cx = px + reach;                 // beam's right end; flywheel below it
+  const cy = 200, rod = cy - py, wheelR = 50;
+  return { xl, xr, arm, link, px, py, reach, crank, cx, cy, rod, wheelR };
+})();
+const BEAM_EYE = 0.0130;   // of the beam's width, from each end to the centre of its eye
+const beamEl = $("beam"), wheelEl = $("wheel"), pedEl = $("pedestal");
+{
+  const M = MECH, w = 2 * M.reach / (1 - 2 * BEAM_EYE);
+  beamEl.style.cssText = `left:${M.px - w / 2}px;width:${w}px;top:${M.py}px;translate:0 -50%;transform-origin:50% 50%`;
+  wheelEl.style.cssText = `left:${M.cx - M.wheelR}px;top:${M.cy - M.wheelR}px;width:${M.wheelR * 2}px;height:${M.wheelR * 2}px`;
+  const pw = 74;
+  pedEl.style.cssText = `left:${M.cx - pw / 2}px;top:${M.cy - pw * .13}px;width:${pw}px;height:${416 - M.cy + pw * .13}px`;
+}
+function seg(el, ax, ay, bx, by, w) {   // a rod from eye to eye; the eyes keep their shape however long it is
+  const len = Math.hypot(bx - ax, by - ay);
+  el.style.width = w + "px";
+  el.style.height = len + w + "px";
+  el.style.borderWidth = `${w}px 0`;
+  el.style.left = ax - w / 2 + "px";
+  el.style.top = ay + "px";
+  el.style.transformOrigin = "50% 0";
+  el.style.transform = `translateY(${-w / 2}px) rotate(${Math.atan2(by - ay, bx - ax) - Math.PI / 2}rad)`;
+  el.style.transformOrigin = `50% ${w / 2}px`;
+}
+function drawEngine(theta) {
+  const M = MECH;
+  const pinx = M.cx + M.crank * Math.cos(theta), piny = M.cy + M.crank * Math.sin(theta);
+  // where a circle round the pivot (the beam) meets a circle round the pin (the rod): the upper one
+  const dx = pinx - M.px, dy = piny - M.py, d = Math.hypot(dx, dy);
+  const along = (M.reach * M.reach - M.rod * M.rod + d * d) / (2 * d);
+  const off = Math.sqrt(Math.max(0, M.reach * M.reach - along * along));
+  const ex = M.px + along * dx / d + off * dy / d, ey = M.py + along * dy / d - off * dx / d;
+  const phi = Math.atan2(ey - M.py, ex - M.px);
+  beamEl.style.transform = `rotate(${phi}rad)`;
+  wheelEl.style.transform = `rotate(${theta}rad)`;
+  const c = Math.cos(phi), s = Math.sin(phi);
+  const qr = [M.px + M.arm * c, M.py + M.arm * s], ql = [M.px - M.arm * c, M.py - M.arm * s];
+  const yr = qr[1] + Math.sqrt(M.link * M.link - (M.xr - qr[0]) ** 2), yl = ql[1] + Math.sqrt(M.link * M.link - (M.xl - ql[0]) ** 2);
+  ROD_R.style.transform = `translateY(${yr - ROD_TOP}px)`;
+  ROD_L.style.transform = `translateY(${yl - ROD_TOP}px)`;
+  seg($("linkR"), qr[0], qr[1], M.xr, yr, 15);
+  seg($("linkL"), ql[0], ql[1], M.xl, yl, 15);
+  seg($("conrod"), ex, ey, pinx, piny, 20);
+}
+let engineAngle = q.has("theta") ? +q.get("theta") : -0.9, engineLast = 0;
+function engineFrame(now) {
+  if (stage.dataset.state !== "thinking") { engineLast = 0; return; }
+  if (engineLast) engineAngle += (now - engineLast) / 1700 * 2 * Math.PI;   // one turn in 1.7 s
+  engineLast = now;
+  drawEngine(engineAngle);
+  requestAnimationFrame(engineFrame);
+}
+drawEngine(engineAngle);
+
 // ---------- steam from the tops of the cylinders, and a little from the valves ----------
 [[55, 82, 0], [55, 82, .7], [55, 82, 1.4], [291, 82, .35], [291, 82, 1.05], [291, 82, 1.75]].forEach(([x, y, delay], i) => {
   const p = document.createElement("div");
@@ -132,6 +203,7 @@ function scheduleClear() {   // text that wasn't read aloud needs time to be rea
 window.carnot = ev => {
   if (ev.type === "state") {
     stage.dataset.state = ev.state;
+    if (ev.state === "thinking") requestAnimationFrame(engineFrame);
     clearTimeout(clearT);
     eyes.style.opacity = ev.state === "offline" ? 1 : 0;
     if (ev.state === "listening") { hide($("reply")); show($("user"), "", ""); }
@@ -194,6 +266,7 @@ input.addEventListener("focus", () => native({type: "focused"}));
 $("attach").onclick = () => native({type: "attach"});
 $("voice").onclick = () => native({type: "server", payload: {type: "voice", on: !voiceOn}});
 $("prov").onclick = () => native({type: "settings"});
+$("tasks").onclick = () => native({type: "schedules"});
 
 // ---------- preview: index.html?state=speaking&still=1&eyes=1&user=..&reply=.. ----------
 if (q.get("state")) {

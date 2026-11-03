@@ -390,6 +390,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
             chipsShown = (body["count"] as? Int ?? 0) > 0
             handle.passBelow = chipsShown ? chipsHeight : 0
         case "settings": openSettings()
+        case "schedules": openSchedules()
         case "open":
             if let s = body["url"] as? String, let u = URL(string: s), u.scheme == "https" { NSWorkspace.shared.open(u) }
         case "server":
@@ -441,7 +442,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         new.target = self
         m.addItem(new)
         if !sessionItems.isEmpty { m.addItem(.separator()) }
-        let clients = ["telegram": "Telegram · ", "feishu": "飞书 · "]
+        let clients = ["telegram": "Telegram · ", "feishu": "飞书 · ", "vscode": "VS Code · ", "schedule": "定时 · "]
         for s in sessionItems.prefix(20) {
             guard let id = s["id"] as? String else { continue }
             let title = s["title"] as? String ?? "对话"
@@ -473,6 +474,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         conversations.submenu = sessionsMenu()
         m.addItem(conversations)
         add("连接设置…", #selector(openSettings))
+        add("定时任务…", #selector(openSchedules))
         add("远程机器人…", #selector(openBots))
         add("显示 / 隐藏人物", #selector(toggleVisible))
         add("重启语音服务", #selector(restartServer))
@@ -522,6 +524,12 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
             _ = server.send(["type": "session_delete", "id": s["id"] ?? ""])
+        }
+    }
+    @objc func openSchedules() {
+        openSettings()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            self.settingsWeb?.evaluateJavaScript("document.getElementById('schedules').scrollIntoView()")
         }
     }
     @objc func openBots() {

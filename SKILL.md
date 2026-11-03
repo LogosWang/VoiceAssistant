@@ -13,6 +13,9 @@ server/        voice service and AI runner (Python)
   syscap/main.swift ScreenCaptureKit helper: what the Mac plays, the echo reference
   agent_core.py     one turn through any AI's CLI; used by the app and the extension
   carnot_agent.py   command line front of agent_core, used by the extension
+  attachments.py    readable versions of attachments an AI can't read (HEIC, video frames, xlsx, doc, pdf, mat, GBK text), in ~/.carnot/converted
+  schedules.py      tasks the AI runs at set times; one list in ~/.carnot/schedules, managed in the settings window or by any AI
+  checkpoints.py    a snapshot of the folder around each turn, in a shadow git dir (~/.carnot/checkpoints)
   claude_bridge.py  the app's side: queue, speech, browser login on expiry
   providers.py      the six AIs, their sign-in, keys in the keychain
   shared.py         shared memory and skills, persona
@@ -51,15 +54,23 @@ To test without acting on anything: `/Applications/Carnot.app/Contents/MacOS/Car
 | another wake name | `[wake] name`, `pronunciations`, `asr_aliases` |
 | voice | `[tts] edge_voice`, `engine = "say"` for offline |
 
-AIs and API keys are in the app's connection settings (button on the left of the input box), or the extension's `Carnot: 连接设置`. The extension chooses separately, in its chat view (`carnot.permissionMode`), and has no approval prompt: actions needing approval fail.
+AIs and API keys are in the app's connection settings (button on the left of the input box), or the extension's `Carnot: 连接设置`. The extension chooses separately, in its chat view (`carnot.permissionMode`, which adds `manual`). It answers Claude Code's questions in the chat: approvals, plan review, AskUserQuestion. Codex and Gemini can't ask from there, so `manual` only reads on them. The app and bots have no prompt: what needs approval fails.
 
 ## Sessions and remote bots
 
-- The menu-bar icon has 会话 (new, continue, rename, delete), stored in `~/.carnot/sessions.json`. Only titles and each CLI's session id are kept. VS Code chats are separate.
+- The menu-bar icon has 会话 (new, continue, rename, delete), stored in `~/.carnot/sessions.json`. VS Code uses the same list, with a history view. What's said goes to `~/.carnot/transcripts`; turns older than that are read from Claude's and Codex's own logs (`sessions.history`). The store is shared between processes under a file lock.
 - 远程机器人… manages Telegram and Feishu bots (`server/bots.py`, config in `~/.carnot/bots.json`, tokens in the keychain, received files in `~/.carnot/inbox`).
 - A reply line `[发送文件：path]` sends that file to the chat. `blocked_reason` in `bots.py` refuses keys and credentials on the real path. It only covers uploads: what the AI reads can still reach its text reply.
 - Don't weaken these: a sender must pair with a code shown on the Mac; private chats only; at most `auto`, never bypass; replies aren't spoken and content isn't shown on screen; tokens and message content stay out of the log.
 - Feishu needs a self-built enterprise app, the long-connection event subscription and the `im.message.receive_v1` event. Stopping one only ignores messages until a restart: the SDK can't close its connection.
+
+## Scheduled tasks
+
+- 定时任务… in the menu-bar icon, the clock button on the input box, or the settings window. Daily, weekdays, chosen weekdays, every N minutes, or once.
+- There is one list, `~/.carnot/schedules/tasks.json`, under a file lock. Any AI changes it through `carnot_agent.py schedule-*`, as the memory prompt tells it. Claude Code's session-only tools (`CronCreate` and the like) are disabled in Carnot, because they die with the turn's process.
+- In `auto` and `acceptEdits`, an allow rule lets exactly that command through (Claude Code's classifier blocks it otherwise). Scheduled runs don't get the rule. Tasks an AI adds are announced and marked in the list, so none goes unseen.
+- They run only while the app is open and the Mac is awake, one at a time, each as a fresh AI session written to one conversation per task. A missed time runs once at the next chance unless catch-up is off.
+- Don't weaken these: at most `auto`, never bypass, since nobody is there to approve; an hour's limit per run; notifications show the task's name, not its result.
 
 ## Memory and skills
 
@@ -80,11 +91,13 @@ Read `~/Library/Logs/Carnot/carnot.log` first. Don't guess.
 | no reaction to voice | `using microphone:` shows the wrong device; Microphone permission; voice button off (`server/.voice_off`) |
 | media answered as commands | `[aec] capturing` missing, or raise `threshold` |
 | refused login | subscription: the browser login opens by itself; API key: connection settings open |
-| Gemini sign-in fails | Google moved free and Google One accounts to Antigravity CLI: use an API key |
+| Gemini signed in on the web, still won't connect | `IneligibleTierError`: Google refuses free personal accounts on Gemini CLI after a successful login. Use an API key. A key runs from `~/.carnot/gemini` (`GEMINI_CLI_HOME`), because the CLI obeys the saved sign-in over any key |
 
 ## Notes for changes
 
 - Don't stop the mic stream in-process: `Pa_StopStream` can deadlock inside CoreAudio. Voice off re-execs the service.
 - Don't use Apple's VoiceProcessingIO (ducks other audio) or WebRTC AEC3 (squashes the voice).
 - Test as the app runs: a bare environment, not this shell's PATH.
+- `carnot_agent.py run` reads JSON lines on stdin: first `{text, shown}`, then answers `{id, allow, ...}`. EOF or SIGTERM denies what's open. Don't block a turn on an answer without that way out.
+- Checkpoints never touch the project's `.git`, skip the home folder, and need git on PATH.
 - `handle_rest()` in `voice_server.py` is the owner's unfinished exercise. Leave it.

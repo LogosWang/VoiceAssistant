@@ -14,7 +14,6 @@ def sub(pat, rep, flags=0):
 sub(r"#engine,#engineFront\{[^}]*\}", f"#engine,#engineFront{{left:0;top:{E_TOP}px;width:320px}}")
 sub(r"\.rod\{width:[\d.]+px;top:-?[\d.]+px;", f".rod{{width:{pw:.1f}px;top:{top:.1f}px;")
 sub(r"#rodL\{[^}]*\}", f"#rodL{{left:{lx*s-pw/2:.1f}px}}"); sub(r"#rodR\{left:[^;]*;", f"#rodR{{left:{rx*s-pw/2:.1f}px;")
-sub(r"to\{transform:translateY\(\d+px\)\}", f"to{{transform:translateY({TRAVEL}px)}}")
 for k in ("eyes", "mouth"):
     g = geo[k]; sub(rf"#{k}\{{left:[^;]*;top:[^;]*;width:[^;]*;height:[^;]*;", f"#{k}{{left:{g['left']:.3f}%;top:{g['top']:.3f}%;width:{g['width']:.3f}%;height:{g['height']:.3f}%;")
 y = mouth_y - 2

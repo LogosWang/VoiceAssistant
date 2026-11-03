@@ -1,0 +1,11 @@
+Use the imagegen skill and built-in image_gen tool. Make these four images, one image_gen call each, and copy each result into the current directory under the given name. Do not write code.
+
+engine_ref.png is the steam engine these parts belong to. Match its style exactly: same riveted cold dark iron and tarnished pewter, thin dark ink lines, flat loose washes with crisp shadow shapes, damp gloomy Victorian feel. A dim cool light from the viewer's LEFT: left sides lit, right sides in shadow. Every part is drawn flat-on, seen straight from the front with no perspective, alone and centred. Background: perfectly flat solid pure chroma magenta #FF00FF, nothing else, no shadow, no floor, no text.
+
+1. beam.png: a walking beam of a Victorian beam engine. One long horizontal cast iron beam, perfectly level and left-right symmetrical, thicker at the middle and tapering gently to both ends, with a round bearing boss at the exact centre and a small round pin eye at each end. It spans nearly the full width of the image. Landscape 1536x1024.
+
+2. flywheel.png: a heavy cast iron flywheel seen exactly face-on, a perfect circle: thick rim, eight or six straight spokes, round central hub with a bolt. Perfectly centred, filling most of the image. No crank handle. Square 1024x1024.
+
+3. conrod.png: a connecting rod, perfectly vertical and left-right symmetrical: a straight slender iron rod with a round eye at the very top and a round eye at the very bottom, both eyes the same size, each with a small brass bushing. It spans the full height of the image. Portrait 1024x1536.
+
+4. pedestal.png: a cast iron bearing pedestal seen from the front: a tall narrow A-frame stand, wide bolted foot at the bottom, narrowing to a round bearing housing at the very top, where a flywheel axle sits. Left-right symmetrical. Portrait 1024x1536.

@@ -2,7 +2,7 @@
   "name": "carnot",
   "displayName": "Carnot",
   "description": "Chat with Claude, ChatGPT, Gemini, ZCode, DeepSeek or Doubao in VS Code, with one memory and one set of skills shared with the Carnot app.",
-  "version": "0.1.1",
+  "version": "0.2.4",
   "publisher": "carnot-local",
   "engines": { "vscode": "^1.90.0" },
   "categories": ["AI", "Chat"],
@@ -16,6 +16,7 @@
       "carnot": [{ "type": "webview", "id": "carnot.chat", "name": "对话" }]
     },
     "commands": [
+      { "command": "carnot.openHere", "title": "Carnot: 在当前文件夹新建对话", "icon": "media/editor-icon.svg" },
       { "command": "carnot.newChat", "title": "Carnot: 新对话", "icon": "$(add)" },
       { "command": "carnot.history", "title": "Carnot: 历史对话", "icon": "$(history)" },
       { "command": "carnot.connections", "title": "Carnot: 连接设置", "icon": "$(plug)" },
@@ -23,6 +24,9 @@
       { "command": "carnot.askSelection", "title": "Carnot: 询问选中的代码" }
     ],
     "menus": {
+      "editor/title": [
+        { "command": "carnot.openHere", "group": "navigation@-1" }
+      ],
       "view/title": [
         { "command": "carnot.newChat", "when": "view == carnot.chat", "group": "navigation@1" },
         { "command": "carnot.history", "when": "view == carnot.chat", "group": "navigation@2" },
@@ -43,8 +47,8 @@
         "carnot.permissionMode": {
           "type": "string",
           "default": "auto",
-          "enum": ["plan", "acceptEdits", "auto", "bypassPermissions"],
-          "description": "What the AI may do without asking; also in the chat view. plan: reads only. acceptEdits: may edit files. auto: routine actions proceed, risky ones are blocked. bypassPermissions: anything, unasked. There is no way to answer a prompt here, so an action that would need approval fails instead."
+          "enum": ["plan", "manual", "acceptEdits", "auto", "bypassPermissions"],
+          "description": "What the AI may do without asking; also in the chat view. plan: reads, then shows a plan to approve. manual: asks before each action. acceptEdits: edits files, asks for the rest. auto: routine actions proceed, risky ones ask. bypassPermissions: anything, unasked. Asking works with Claude Code and what runs on it; Codex and Gemini have no way to ask from here, so manual only reads there."
         }
       }
     }

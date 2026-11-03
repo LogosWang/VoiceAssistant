@@ -5,6 +5,7 @@ API key. ZCode (GLM Coding Plan), DeepSeek and Doubao (Ark Coding Plan) take an 
 through Claude Code against their Anthropic-compatible endpoints, so tools keep working.
 Keys live in the macOS keychain, never in a file, and reach the CLI only through its environment.
 """
+import contextlib
 import json
 import os
 import re
@@ -119,10 +120,45 @@ def env(pid):
         out[p["key_env"]] = key
         if pid == "chatgpt":
             out["OPENAI_API_KEY"] = key
+        if pid == "gemini":
+            out["GEMINI_CLI_HOME"] = gemini_key_home()
     if p.get("base_url"):
         out["ANTHROPIC_BASE_URL"] = p["base_url"]
         out["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
     return out
+
+
+CARNOT_HOME = os.path.expanduser(os.environ.get("CARNOT_HOME", "~/.carnot"))
+GEMINI_CREDS = os.path.expanduser("~/.gemini/oauth_creds.json")
+GEMINI_REFUSED = os.path.join(CARNOT_HOME, "gemini_refused")
+
+
+def gemini_key_home():
+    """Gemini CLI obeys the sign-in saved in ~/.gemini over any key, so a key runs from its own home."""
+    home = os.path.join(CARNOT_HOME, "gemini")
+    os.makedirs(os.path.join(home, ".gemini"), exist_ok=True)
+    with open(os.path.join(home, ".gemini", "settings.json"), "w") as f:
+        json.dump({"security": {"auth": {"selectedType": "gemini-api-key"}}}, f)
+    skills = os.path.join(home, ".agents")
+    if not os.path.lexists(skills) and os.path.isdir(os.path.expanduser("~/.agents")):
+        os.symlink(os.path.expanduser("~/.agents"), skills)
+    return home
+
+
+def gemini_refused():
+    """Google turned this sign-in away: the browser login succeeds, the CLI then can't use it."""
+    with contextlib.suppress(OSError):
+        with open(GEMINI_REFUSED, "w") as f:
+            f.write(str(os.path.getmtime(GEMINI_CREDS)))
+
+
+def _gemini_signed_in():
+    if not os.path.exists(GEMINI_CREDS):
+        return False
+    with contextlib.suppress(OSError):
+        with open(GEMINI_REFUSED) as f:
+            return f.read() != str(os.path.getmtime(GEMINI_CREDS))  # a new sign-in gets a new try
+    return True
 
 
 def apply_env(pid):
@@ -159,7 +195,7 @@ def logged_in(pid):
     if pid == "chatgpt" and shutil.which("codex"):
         return subprocess.run(["codex", "login", "status"], capture_output=True).returncode == 0
     if pid == "gemini":
-        return os.path.exists(os.path.expanduser("~/.gemini/oauth_creds.json"))
+        return _gemini_signed_in()
     return False
 
 

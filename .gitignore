@@ -2,6 +2,7 @@
 server/.venv/
 server/models/
 server/syscap/syscap
+server/videoframes/videoframes
 vscode/*.vsix
 vscode/node_modules/
 __pycache__/

@@ -25,6 +25,7 @@ import sherpa_onnx
 from pypinyin import lazy_pinyin
 
 import bots
+import schedules
 import events
 import providers
 import sessions
@@ -148,6 +149,7 @@ class Assistant:
         self.installing = False
         self.voice_on = not os.path.exists(VOICE_FILE)
         self.bots = None
+        self.schedules = None
         self.drop_recording = False  # typed input arrived: abandon the recording in progress
         self.resting = False  # rest mode: ignore commands until told to wake up
         self.follow_up_due = False   # reply finished: listen once more without the wake word
@@ -485,6 +487,10 @@ class Assistant:
             return self.bots.changed()
         if kind.startswith("bot_"):
             return self._bot_command(kind, m)
+        if kind == "schedules":
+            return self.schedules.report()
+        if kind.startswith("schedule_"):
+            return self._schedule_command(kind, m)
         if kind.startswith("session_"):
             return self._session_command(kind, m)
         if kind == "text":
@@ -528,6 +534,23 @@ class Assistant:
             b.pair(bot)
         elif kind == "bot_unpair":
             b.unpair(bot, m.get("user"))
+
+    def _schedule_command(self, kind, m):
+        s, task = self.schedules, m.get("id")
+        if kind == "schedule_save":
+            try:
+                s.save(m.get("task") or {})
+            except ValueError as e:
+                events.emit("notice", text=f"没有保存：{e}", hold=8000)
+                events.emit("schedule_error", text=str(e))
+        elif kind == "schedule_remove":
+            s.remove(task)
+        elif kind == "schedule_enable":
+            s.enable(task, m.get("on"))
+        elif kind == "schedule_run":
+            s.run_now(task)
+        elif kind == "schedule_stop":
+            s.stop_task(task)
 
     def _session_command(self, kind, m):
         sid = m.get("id")
@@ -708,7 +731,7 @@ class Assistant:
                 if self.recording is not None:
                     self._end_recording()
                 self.follow_up_due = False
-                remote = self.bots and self.bots.active
+                remote = (self.bots and self.bots.active) or (self.schedules and self.schedules.active)
                 if stream is not None and not self.bridge.busy and not remote:  # a running task would die with the process
                     self._restart_without_mic()
             try:
@@ -766,6 +789,8 @@ def main():
         a.bots = bots.Manager(cfg["claude"], a._transcribe, log, a.refresh_state, a._report_sessions)
         a.bots.start()
         a.bots.changed()
+        a.schedules = schedules.Manager(cfg["claude"], log, a._report_sessions, args.dry_run)
+        a.schedules.start()
         a._report_sessions()
         events.emit("voice", on=a.voice_on)
         threading.Thread(target=a._read_commands, daemon=True).start()
@@ -788,6 +813,8 @@ def main():
         a.bridge.stop()
         a.speaker.stop()
     finally:
+        if a.schedules:
+            a.schedules.stop()
         a.vision.close()
         if a.aec:
             a.aec.close()

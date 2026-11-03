@@ -56,6 +56,7 @@ class ClaudeBridge:
 
     def submit(self, text, dirs=()):
         sessions.touch(self.conversation, text)
+        sessions.record(self.conversation, "user", text)
         self._q.put((text, list(dirs)))
         self.on_change()
 
@@ -122,11 +123,16 @@ class ClaudeBridge:
         pid = self.provider
         before = self.session_id
         splitter = SentenceSplitter(self._speak)
+        said = []
+        def on_text(t):
+            said.append(t)
+            splitter.feed(t)
         self._agent = agent_core.Agent(
             pid, self.workdir, self.cfg["permission_mode"], system=SYSTEM_PROMPT, model=self.cfg.get("model"),
             add_dirs=self.cfg.get("add_dirs", []), session=before if self.cfg.get("keep_session", True) else None,
-            on_text=splitter.feed, on_flush=splitter.flush, on_log=self.log, on_session=self._save_session)
-        status, detail = self._agent.run(text, dirs)
+            on_text=on_text, on_flush=splitter.flush, on_log=self.log, on_session=self._save_session)
+        status, detail = self._agent.run(sessions.with_handoff(self.conversation, pid, text), dirs)
+        sessions.record(self.conversation, "assistant", "".join(said).strip(), provider=pid, parts=self._agent.parts)
         self._proc = None
         if status == "missing":
             events.emit("notice", text=f"{self.name} 的命令行工具还没安装，请到连接设置里安装")

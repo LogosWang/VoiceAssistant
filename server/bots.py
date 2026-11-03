@@ -280,6 +280,8 @@ class Bot:
         pid = providers.current()
         name = providers.PROVIDERS[pid]["name"]
         sessions.touch(sid, body)
+        if not retried:
+            sessions.record(sid, "user", body + "".join("\n\n" + n for n in notes))
         self.manager.changed_sessions()
         events.emit("notice", text=f"正在处理来自 {self.kind_name} 的消息", hold=4000)
         self.manager.log(f"[bot {self.cfg['name']}] a message, {len(body)} characters, {len(notes)} attachments")
@@ -290,18 +292,20 @@ class Bot:
             system=SYSTEM.format(name=self.kind_name), model=self.manager.model, add_dirs=self.manager.add_dirs,
             session=sessions.native(sid, pid), on_text=parts.append, on_log=self.manager.log,
             on_session=lambda s: sessions.set_native(sid, pid, s))
+        agent = self.agent
         beat = threading.Event()
         def typing_loop():
             while not beat.wait(4.5):
                 self.typing(chat)
         threading.Thread(target=typing_loop, daemon=True).start()
         self.typing(chat)
-        prompt = body + "".join("\n\n" + n for n in notes)
+        prompt = sessions.with_handoff(sid, pid, body + "".join("\n\n" + n for n in notes))
         try:
             status, detail = self.agent.run(prompt, [os.path.join(INBOX, self.cfg["id"])])
         finally:
             beat.set()
             self.agent = None
+        sessions.record(sid, "assistant", "".join(parts).strip(), provider=pid, parts=agent.parts)
         if status == "ok":
             return self._deliver(chat, "".join(parts).strip())
         if status == "stopped":

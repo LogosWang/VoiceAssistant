@@ -47,11 +47,48 @@ button.quiet{border-color:#57503f;color:var(--dim)}
 #botForm select{background:#100f13;color:var(--ink);border:1px solid #57503f;border-radius:2px;padding:4px;font:13px "Songti SC","PingFang SC",serif}
 #botHelp{color:var(--dim);font-size:12px;line-height:1.5}
 #msg{min-height:18px;color:#e8a06a;font-size:12.5px;margin-top:4px}
+#schedules{background:var(--row);border:1px solid rgba(196,154,82,.45);border-radius:3px;padding:10px 12px;margin-bottom:12px}
+#schedules h2{font-size:15px;font-weight:600;margin:0 0 3px}
+#schedules .hint{color:var(--dim);font-size:12px;margin:0 0 8px}
+.task{border-top:1px solid rgba(196,154,82,.25);padding:8px 0}
+.task .head{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.task .tname{font-weight:600;flex:1;min-width:120px}
+.task.off .tname{color:var(--dim)}
+.task .meta{font-size:12px;color:var(--dim);margin-top:3px}
+.task .bad{color:#d98a8a}.task .good{color:var(--ok)}
+.task pre{margin:6px 0 0;padding:6px 8px;background:#100f13;border:1px solid #57503f;border-radius:2px;font:12.5px/1.5 "PingFang SC",sans-serif;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;overflow:auto;user-select:text;-webkit-user-select:text}
+#taskForm{border-top:1px solid rgba(196,154,82,.25);padding-top:8px;display:flex;flex-direction:column;gap:6px}
+#taskForm .line{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+#taskForm label{font-size:12.5px;color:var(--dim);display:flex;gap:4px;align-items:center}
+#taskForm input:not([type=checkbox]),#taskForm textarea,#taskForm select{background:#100f13;color:var(--ink);border:1px solid #57503f;border-radius:2px;padding:4px 6px;font:13px "Songti SC","PingFang SC",serif;color-scheme:dark}
+#taskForm textarea{width:100%;min-height:62px;resize:vertical}
+#taskName,#taskDir{flex:1;min-width:140px}
+#taskEvery{width:70px;min-width:0;flex:none}
+#taskForm input[type=checkbox]{flex:none;width:auto;min-width:0;margin:0}
+#taskForm label{flex:none}
+#taskTime,#taskAt{flex:none;width:auto;min-width:0}
+#taskError{color:#d98a8a;font-size:12.5px}
+[hidden]{display:none!important}
 </style></head><body><main>
 <h1>连接设置</h1>
 <p class="sub">选一家作为 Carnot 的大脑。API Key 只保存在这台 Mac 的钥匙串里。</p>
 <section id="perm"><h2>AI 的权限</h2><div class="modes" id="modes"></div><div id="permNote"></div>
 <div id="permConfirm">完全放行后，AI 可以不经确认执行任何操作，包括删除文件和对外发送内容；旁边任何人喊唤醒词，也能让它这样做。<div><button id="permYes" class="use">确认放行</button><button id="permNo" class="quiet">取消</button></div></div></section>
+<section id="schedules"><h2>定时任务</h2><p class="hint">到时间让 AI 自动做一件事，每个任务的结果记录在会话列表里。电脑要醒着，Carnot 要开着。没有人确认，所以最高只到“自动”权限，需要确认的操作会被跳过。</p>
+<div id="taskList"></div>
+<div id="taskAddLine"><button id="taskNew">新建任务</button></div>
+<div id="taskForm" hidden>
+  <div class="line"><input id="taskName" placeholder="名称（可不填）" autocomplete="off" spellcheck="false"></div>
+  <textarea id="taskPrompt" placeholder="要做什么，比如：看一下项目的 git log，总结昨天的改动，写到 ~/Desktop/日报.md" spellcheck="false"></textarea>
+  <div class="line"><select id="taskRepeat"><option value="daily">每天</option><option value="weekdays">工作日</option><option value="weekly">每周</option><option value="every">每隔一段时间</option><option value="once">只一次</option></select>
+    <input id="taskTime" type="time" value="09:00"><span id="taskEveryBox" hidden><input id="taskEvery" type="number" min="1" value="60"> 分钟</span><input id="taskAt" type="datetime-local" hidden></div>
+  <div class="line" id="taskDays" hidden></div>
+  <div class="line"><label>AI <select id="taskProvider"></select></label><label>权限 <select id="taskPerm"><option value="plan">只读规划</option><option value="acceptEdits">可改文件</option><option value="auto" selected>自动</option></select></label></div>
+  <div class="line"><input id="taskDir" placeholder="工作文件夹（不填用默认的）" autocomplete="off" spellcheck="false"></div>
+  <div class="line"><label><input id="taskCatchUp" type="checkbox" checked> 错过时间（电脑睡着或没开 Carnot）后补跑一次</label></div>
+  <div id="taskError"></div>
+  <div class="line"><button id="taskSave">保存</button><button id="taskCancel">取消</button></div>
+</div></section>
 <section id="bots"><h2>远程机器人</h2><p class="hint">用手机上的 Telegram 或飞书发文字、图片、文件和语音给 Carnot，也可以让它把电脑上的文件发给你。只接受配对过的人的私聊。电脑要开着，Carnot 要在运行。</p>
 <div id="botList"></div>
 <div id="botForm">
@@ -195,9 +232,108 @@ function drawBots(items) {
 const showBots = window.carnot;
 window.carnot = ev => { if (ev.type === "bots") drawBots(ev.items); else showBots(ev); };
 
+// ---------- scheduled tasks ----------
+const WEEK = ["一", "二", "三", "四", "五", "六", "日"], WEEKDAYS = [0, 1, 2, 3, 4], ALL_DAYS = [0, 1, 2, 3, 4, 5, 6];
+const TASK_STATUS = {ok: ["完成", "good"], failed: ["失败", "bad"], auth: ["登录失效", "bad"], missing: ["AI 没安装", "bad"], timeout: ["超时", "bad"],
+  stopped: ["已停止", ""], interrupted: ["被中断（Carnot 退出了）", "bad"], missed: ["错过了时间，已跳过", ""], running: ["运行中", ""], no_conversation: ["失败", "bad"]};
+let taskEditing = null, taskRemoving = null, taskItems = [], taskProviders = [], taskOpen = new Set();
+for (const [i, d] of WEEK.entries()) {
+  const l = document.createElement("label"), c = document.createElement("input");
+  c.type = "checkbox"; c.value = i; c.dataset.day = i; l.append(c, "周" + d); $b("taskDays").append(l);
+}
+const dayBoxes = () => [...$b("taskDays").querySelectorAll("input")];
+function taskRepeatShown() {
+  const r = $b("taskRepeat").value, days = r === "daily" || r === "weekdays" || r === "weekly";
+  $b("taskTime").hidden = !days; $b("taskEveryBox").hidden = r !== "every"; $b("taskAt").hidden = r !== "once"; $b("taskDays").hidden = r !== "weekly";
+}
+$b("taskRepeat").onchange = taskRepeatShown;
+function drawTaskProviders(chosen) {
+  const sel = $b("taskProvider"); sel.textContent = "";
+  sel.add(new Option("跟随当前选择", ""));
+  for (const p of taskProviders) sel.add(new Option(p.name + (p.ready ? "" : "（未连接）"), p.id));
+  sel.value = chosen || "";
+}
+const localInput = sec => { const d = new Date(sec * 1000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); return d.toISOString().slice(0, 16); };
+function openTaskForm(t) {
+  taskEditing = t ? t.id : null;
+  $b("taskName").value = t ? t.name : ""; $b("taskPrompt").value = t ? t.prompt : ""; $b("taskDir").value = t ? t.workdir : "";
+  $b("taskPerm").value = t ? t.permission : "auto"; $b("taskCatchUp").checked = t ? t.catch_up !== false : true; $b("taskError").textContent = "";
+  drawTaskProviders(t && t.provider);
+  let repeat = "daily";
+  if (t) {
+    if (t.repeat === "every") { repeat = "every"; $b("taskEvery").value = t.every; }
+    else if (t.repeat === "once") { repeat = "once"; $b("taskAt").value = localInput(t.at); }
+    else { $b("taskTime").value = t.time; repeat = t.days.length === 7 ? "daily" : t.days.join() === WEEKDAYS.join() ? "weekdays" : "weekly"; }
+  }
+  dayBoxes().forEach(b => { b.checked = !!(t && t.days && t.days.includes(+b.dataset.day)); });
+  $b("taskRepeat").value = repeat; taskRepeatShown();
+  $b("taskForm").hidden = false; $b("taskAddLine").hidden = true; $b("taskPrompt").focus();
+}
+function closeTaskForm() { taskEditing = null; $b("taskForm").hidden = true; $b("taskAddLine").hidden = false; }
+$b("taskNew").onclick = () => openTaskForm(null);
+$b("taskCancel").onclick = closeTaskForm;
+$b("taskSave").onclick = () => {
+  const r = $b("taskRepeat").value, task = {id: taskEditing, name: $b("taskName").value, prompt: $b("taskPrompt").value, workdir: $b("taskDir").value,
+    provider: $b("taskProvider").value, permission: $b("taskPerm").value, catch_up: $b("taskCatchUp").checked};
+  if (r === "every") Object.assign(task, {repeat: "every", every: $b("taskEvery").value});
+  else if (r === "once") Object.assign(task, {repeat: "once", at: $b("taskAt").value});
+  else Object.assign(task, {repeat: "days", time: $b("taskTime").value, days: r === "daily" ? ALL_DAYS : r === "weekdays" ? WEEKDAYS : dayBoxes().filter(b => b.checked).map(b => +b.dataset.day)});
+  $b("taskError").textContent = ""; taskSaving = true;
+  server({type: "schedule_save", task});
+};
+let taskSaving = false;
+function taskWhen(t) {
+  if (t.repeat === "once") return "一次";
+  if (t.repeat === "every") return t.every % 60 ? `每 ${t.every} 分钟` : `每 ${t.every / 60} 小时`;
+  const names = t.days.length === 7 ? "每天" : t.days.join() === WEEKDAYS.join() ? "工作日" : "每周" + t.days.map(d => WEEK[d]).join("、");
+  return `${names} ${t.time}`;
+}
+const stamp = sec => new Date(sec * 1000).toLocaleString("zh-CN", {month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit"});
+function drawTasks(items) {
+  taskItems = items;
+  if (taskSaving) { taskSaving = false; closeTaskForm(); }
+  const box = $b("taskList"); box.textContent = "";
+  for (const t of items) {
+    const row = document.createElement("div"); row.className = "task" + (t.enabled ? "" : " off");
+    const head = document.createElement("div"); head.className = "head";
+    const name = document.createElement("span"); name.className = "tname"; name.textContent = t.name;
+    const go = document.createElement("button");
+    if (t.running || t.queued) { go.textContent = "停止"; go.onclick = () => server({type: "schedule_stop", id: t.id}); }
+    else { go.textContent = "立即运行"; go.onclick = () => server({type: "schedule_run", id: t.id}); }
+    const on = document.createElement("button"); on.textContent = t.enabled ? "暂停" : "启用"; on.onclick = () => server({type: "schedule_enable", id: t.id, on: !t.enabled});
+    const edit = document.createElement("button"); edit.textContent = "编辑"; edit.onclick = () => openTaskForm(t);
+    const del = document.createElement("button"); del.textContent = taskRemoving === t.id ? "确认删除" : "删除";
+    del.onclick = () => { if (taskRemoving === t.id) { taskRemoving = null; server({type: "schedule_remove", id: t.id}); } else { taskRemoving = t.id; drawTasks(taskItems); } };
+    head.append(name, go, on, edit, del); row.append(head);
+    const meta = document.createElement("div"); meta.className = "meta";
+    const next = t.running ? "运行中" : t.queued ? "排队中" : t.enabled && t.next_run ? "下次 " + stamp(t.next_run) : t.enabled ? "" : "已暂停";
+    meta.append([taskWhen(t), t.source === "ai" ? "AI 创建" : "", next].filter(Boolean).join(" · "));
+    const known = TASK_STATUS[t.last_status];
+    if (t.last_status && !t.running) {
+      const st = document.createElement("span"); st.className = known ? known[1] : ""; st.textContent = ` · 上次 ${t.last_run ? stamp(t.last_run) + " " : ""}${known ? known[0] : t.last_status}`; meta.append(st);
+    }
+    row.append(meta);
+    const output = t.last_output || (t.last_status && t.last_status !== "ok" && t.last_detail) || "";
+    if (output && !t.running) {
+      const more = document.createElement("button"); more.textContent = taskOpen.has(t.id) ? "收起结果" : "查看结果"; more.style.marginTop = "5px";
+      more.onclick = () => { taskOpen.has(t.id) ? taskOpen.delete(t.id) : taskOpen.add(t.id); drawTasks(taskItems); };
+      row.append(more);
+      if (taskOpen.has(t.id)) { const pre = document.createElement("pre"); pre.textContent = output; row.append(pre); }
+    }
+    box.append(row);
+  }
+}
+const showBeforeTasks = window.carnot;
+window.carnot = ev => {
+  if (ev.type === "schedules") return drawTasks(ev.items);
+  if (ev.type === "schedule_error") { taskSaving = false; $b("taskError").textContent = ev.text; return; }
+  if (ev.items && ev.current !== undefined) taskProviders = ev.items;
+  showBeforeTasks(ev);
+};
+
 const demo = new URLSearchParams(location.search).get("demo");
 if (demo) carnot(JSON.parse(demo));
-else { server({type: "providers"}); server({type: "bots"}); }
+else { server({type: "providers"}); server({type: "bots"}); server({type: "schedules"}); }
 const demoBots = new URLSearchParams(location.search).get("bots");
 if (demoBots) carnot(JSON.parse(demoBots));
 </script></body></html>
