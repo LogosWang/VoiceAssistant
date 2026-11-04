@@ -23,6 +23,7 @@ import uuid
 import numpy as np
 
 import agent_core
+import compat
 import events
 import providers
 import sessions
@@ -46,7 +47,11 @@ IMAGE_SUFFIXES = (".jpg", ".jpeg", ".png", ".webp")
 # Never sent, whatever the AI writes: a file it reads could be telling it to. Checked on the real
 # path, so a symlink doesn't get around it.
 BLOCKED_DIRS = (".ssh", ".gnupg", ".aws", ".azure", ".kube", ".docker", ".config/gcloud", ".config/gh",
-                "Library/Keychains", "Library/Cookies", ".codex/auth.json", ".claude/.credentials.json")
+                "Library/Keychains", "Library/Cookies", ".codex/auth.json", ".claude/.credentials.json", ".gemini/oauth_creds.json",
+                "AppData/Local/Microsoft/Credentials", "AppData/Roaming/Microsoft/Credentials", "AppData/Roaming/Microsoft/Protect",
+                "AppData/Local/Microsoft/Vault", "AppData/Roaming/Microsoft/Crypto", "AppData/Roaming/Microsoft/SystemCertificates",
+                "AppData/Local/Google/Chrome/User Data", "AppData/Local/Microsoft/Edge/User Data",
+                "AppData/Local/BraveSoftware", "AppData/Roaming/Mozilla/Firefox/Profiles", "NTUSER.DAT")
 BLOCKED_NAMES = re.compile(r"(^\.env(\..*)?$|^\.netrc$|^\.npmrc$|^\.pypirc$|^id_(rsa|dsa|ecdsa|ed25519)(\.pub)?$"
                            r"|\.(pem|key|p12|pfx|keychain|keychain-db)$|^secrets?\.|^credentials|^cookies(\.sqlite)?$)", re.I)
 
@@ -64,16 +69,20 @@ def _key_name(bot_id, field="token"):
 
 def blocked_reason(path):
     """Why this real path may not leave the machine, or None."""
+    if compat.IS_WIN and (":" in path[3:] or path.startswith("\\\\.\\")):
+        return True  # an alternate data stream or a device path: nothing a person would ask to send
+    same = compat.same_path  # case doesn't count on Windows, so neither may this check
+    path = same(path)
     home = os.path.realpath(os.path.expanduser("~"))
     for d in BLOCKED_DIRS:
-        root = os.path.join(home, d)
+        root = same(os.path.normpath(os.path.join(home, d)))
         if path == root or path.startswith(root + os.sep):
             return True
-    carnot = os.path.realpath(shared.HOME)
-    if path.startswith(carnot + os.sep) and not path.startswith(os.path.realpath(INBOX) + os.sep) \
-            and path != os.path.realpath(shared.PORTRAIT):
+    carnot = same(os.path.realpath(shared.HOME))
+    if path.startswith(carnot + os.sep) and not path.startswith(same(os.path.realpath(INBOX)) + os.sep) \
+            and path != same(os.path.realpath(shared.PORTRAIT)):
         return True  # bots.json and the rest; the portrait and what came in through the inbox may go out
-    return bool(BLOCKED_NAMES.search(os.path.basename(path)))
+    return bool(BLOCKED_NAMES.search(os.path.basename(path).rstrip(". ")))
 
 
 def _safe_name(name):
@@ -97,7 +106,7 @@ class Store:
             with open(tmp, "w", encoding="utf-8") as f:
                 json.dump(self.data, f, ensure_ascii=False, indent=1)
             os.chmod(tmp, 0o600)
-            os.replace(tmp, CONFIG)
+            compat.replace(tmp, CONFIG)
 
     def bots(self):
         return self.data["bots"]
@@ -641,10 +650,11 @@ class Manager:
     def transcribe(self, data):
         """Voice messages are Ogg Opus; soundfile reads them with no ffmpeg on the machine."""
         import soundfile
-        with tempfile.NamedTemporaryFile(suffix=".ogg") as f:
-            f.write(data)
-            f.flush()
-            audio, rate = soundfile.read(f.name, dtype="float32", always_2d=True)
+        with tempfile.TemporaryDirectory() as folder:  # Windows can't open a file twice while it's being written
+            path = os.path.join(folder, "voice.ogg")
+            with open(path, "wb") as f:
+                f.write(data)
+            audio, rate = soundfile.read(path, dtype="float32", always_2d=True)
         audio = audio.mean(1)
         if rate != 16000 and len(audio):
             n = int(len(audio) * 16000 / rate)

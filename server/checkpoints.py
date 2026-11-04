@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 
+import compat
 import shared
 
 ROOT = os.path.join(shared.HOME, "checkpoints")
@@ -19,12 +20,18 @@ def available():
     """/usr/bin/git on a Mac without developer tools only opens an install dialog."""
     if not shutil.which("git"):
         return False
+    if compat.IS_WIN:
+        return True
     return subprocess.run(["xcode-select", "-p"], capture_output=True).returncode == 0 or shutil.which("git") != "/usr/bin/git"
 
 
 def _too_broad(cwd):
-    real = os.path.realpath(cwd)
-    return real in ("/", os.path.realpath(os.path.expanduser("~")), "/Users", "/tmp", "/private/tmp")
+    real = compat.same_path(os.path.realpath(cwd))
+    if compat.IS_WIN and os.path.dirname(real) == real:  # a drive's root
+        return True
+    home = os.path.realpath(os.path.expanduser("~"))
+    return real in map(compat.same_path, ("/", home, "/Users", "/tmp", "/private/tmp", os.path.dirname(home),
+                                          os.environ.get("TEMP", "/tmp")))
 
 
 def _git(cwd, *args, text=True, env_extra=None):
@@ -35,12 +42,13 @@ def _git(cwd, *args, text=True, env_extra=None):
         os.makedirs(git_dir, exist_ok=True)
         subprocess.run(["git", "init", "-q", "--bare", git_dir], env={k: v for k, v in env.items() if not k.startswith("GIT_")},
                        capture_output=True, timeout=TIMEOUT, check=True)
-        for key, value in (("core.bare", "false"), ("gc.auto", "0"), ("core.autocrlf", "false"), ("advice.addEmbeddedRepo", "false")):
+        for key, value in (("core.bare", "false"), ("gc.auto", "0"), ("core.autocrlf", "false"), ("core.quotepath", "false"), ("core.longpaths", "true"), ("advice.addEmbeddedRepo", "false")):
             subprocess.run(["git", "config", key, value], env=env, capture_output=True, timeout=TIMEOUT)
         os.makedirs(os.path.join(git_dir, "info"), exist_ok=True)
         with open(os.path.join(git_dir, "info", "exclude"), "w") as f:
             f.write("\n".join(ALWAYS_SKIP) + "\n")
-    return subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=text, timeout=TIMEOUT)
+    decoding = {"encoding": "utf-8", "errors": "replace"} if text else {}
+    return subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, timeout=TIMEOUT, **decoding)
 
 
 def snapshot(cwd):
@@ -79,7 +87,8 @@ def changes(cwd, before, after):
 
 def _inside(cwd, path):
     full = os.path.realpath(os.path.join(cwd, path))
-    return full if full.startswith(os.path.realpath(cwd) + os.sep) else None
+    root = os.path.realpath(cwd) + os.sep
+    return full if compat.same_path(full).startswith(compat.same_path(root)) else None
 
 
 def show(cwd, tree, path):

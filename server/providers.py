@@ -3,7 +3,7 @@
 Claude, ChatGPT and Gemini run through their own official CLI, signed in with a subscription or an
 API key. ZCode (GLM Coding Plan), DeepSeek and Doubao (Ark Coding Plan) take an API key and run
 through Claude Code against their Anthropic-compatible endpoints, so tools keep working.
-Keys live in the macOS keychain, never in a file, and reach the CLI only through its environment.
+Keys live in the system's own store (macOS keychain, Windows Credential Manager), never in a file, and reach the CLI only through its environment.
 """
 import contextlib
 import json
@@ -14,9 +14,11 @@ import subprocess
 import tempfile
 import time
 
+import compat
+
 HERE = os.path.dirname(os.path.abspath(__file__))
-CURRENT_FILE = os.path.join(HERE, ".provider")
-PERMISSION_FILE = os.path.join(HERE, ".permission")
+CURRENT_FILE = os.path.join(compat.state_dir(), ".provider")
+PERMISSION_FILE = os.path.join(compat.state_dir(), ".permission")
 # What the AI may do unasked, in Claude Code's words. Nobody can answer a prompt from here, so a
 # mode that would ask ("manual") is left out: it would only fail.
 PERMISSIONS = ("plan", "acceptEdits", "auto", "bypassPermissions")
@@ -50,11 +52,11 @@ def vendor_request(url, key, data=None):
     """(status, body), 0 if it can't be reached. curl because the key goes in over stdin, out of any
     process list, and it trusts what the system trusts."""
     config = f'header = "x-api-key: {key}"\nheader = "Authorization: Bearer {key}"\n'
-    cmd = ["/usr/bin/curl", "-sS", "--max-time", "12", "-K", "-", "-w", "\n%{http_code}", "-H", "anthropic-version: 2023-06-01"]
+    cmd = [*compat.curl(), "-sS", "--max-time", "12", "-K", "-", "-w", "\n%{http_code}", "-H", "anthropic-version: 2023-06-01"]
     if data is not None:
         cmd += ["-H", "content-type: application/json", "--data-binary", json.dumps(data)]
     try:
-        r = subprocess.run(cmd + [url], input=config, capture_output=True, text=True, timeout=20)
+        r = subprocess.run(cmd + [url], input=config, capture_output=True, encoding="utf-8", errors="replace", timeout=20)
         body, _, code = r.stdout.rpartition("\n")
         return int(code or 0), body
     except (OSError, ValueError, subprocess.SubprocessError):
@@ -132,6 +134,10 @@ def _shell_path(fresh):
 def fix_path(fresh=False):
     """An app started from Finder or at login has a bare PATH, and a login shell doesn't help when
     the user's PATH is set in ~/.zshrc. Ask an interactive shell, then add the usual places."""
+    if compat.IS_WIN:
+        merged = compat.user_path() + os.environ.get("PATH", "").split(os.pathsep)
+        os.environ["PATH"] = os.pathsep.join(dict.fromkeys(p for p in merged if p))
+        return
     found = _shell_path(fresh)
     home = os.path.expanduser("~")
     usual = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", f"{home}/.local/bin", f"{home}/bin",
@@ -171,6 +177,8 @@ def set_permission(mode):
 
 
 def get_key(pid):
+    if compat.IS_WIN:
+        return compat.cred_get(KEYCHAIN, pid)
     r = subprocess.run(["security", "find-generic-password", "-s", KEYCHAIN, "-a", pid, "-w"],
                        capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 else ""
@@ -181,11 +189,15 @@ def set_key(pid, key):
     key = key.strip()
     if not re.fullmatch(r"[\x21\x23-\x5b\x5d-\x7e]+", key):  # printable, no quote or backslash
         raise ValueError("bad key")
+    if compat.IS_WIN:
+        return compat.cred_set(KEYCHAIN, pid, key)
     cmd = f'add-generic-password -U -s {KEYCHAIN} -a {pid} -w "{key}"\n'
     subprocess.run(["security", "-i"], input=cmd, capture_output=True, text=True, check=True)
 
 
 def del_key(pid):
+    if compat.IS_WIN:
+        return compat.cred_del(KEYCHAIN, pid)
     subprocess.run(["security", "delete-generic-password", "-s", KEYCHAIN, "-a", pid], capture_output=True)
 
 
@@ -222,7 +234,7 @@ def gemini_key_home():
         json.dump({"security": {"auth": {"selectedType": "gemini-api-key"}}}, f)
     skills = os.path.join(home, ".agents")
     if not os.path.lexists(skills) and os.path.isdir(os.path.expanduser("~/.agents")):
-        os.symlink(os.path.expanduser("~/.agents"), skills)
+        compat.link_dir(os.path.expanduser("~/.agents"), skills)
     return home
 
 
@@ -259,6 +271,9 @@ def login_command(pid):
 
 def open_terminal(command):
     """For a CLI whose sign-in only works in its own interactive screen (Gemini)."""
+    if compat.IS_WIN:  # `command` is one of the CLI names in PROVIDERS, never anything from outside
+        subprocess.Popen(["cmd", "/c", "start", "Carnot", "cmd", "/k", command], stdin=subprocess.DEVNULL)
+        return
     fd, path = tempfile.mkstemp(suffix=".command", prefix="carnot-")
     with os.fdopen(fd, "w") as f:
         f.write(f"#!/bin/zsh -l\n{command}\n")
@@ -268,13 +283,13 @@ def open_terminal(command):
 
 def logged_in(pid):
     if pid == "claude" and shutil.which("claude"):
-        r = subprocess.run(["claude", "auth", "status"], capture_output=True, text=True)
+        r = subprocess.run(compat.argv(["claude", "auth", "status"]), capture_output=True, encoding="utf-8", errors="replace")
         try:
             return bool(json.loads(r.stdout).get("loggedIn"))
         except ValueError:
             return False
     if pid == "chatgpt" and shutil.which("codex"):
-        return subprocess.run(["codex", "login", "status"], capture_output=True).returncode == 0
+        return subprocess.run(compat.argv(["codex", "login", "status"]), capture_output=True).returncode == 0
     if pid == "gemini":
         return _gemini_signed_in()
     return False

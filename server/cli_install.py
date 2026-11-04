@@ -14,10 +14,15 @@ import subprocess
 import tarfile
 import tempfile
 
+import compat
 import providers
 
-NATIVE = "@anthropic-ai/claude-code-darwin-arm64"
-CURL_LIMITS = ["--connect-timeout", "20", "--speed-time", "60", "--speed-limit", "10240", "--retry", "2"]
+NATIVE = "@anthropic-ai/claude-code-win32-x64" if compat.IS_WIN else "@anthropic-ai/claude-code-darwin-arm64"
+PROGRAM = "claude.exe" if compat.IS_WIN else "claude"
+CURL_LIMITS = ["--connect-timeout", "20", "--speed-time", "60"]
+# A mirror can crawl without quite stalling, and at 30 KB/s this download takes over an hour: another mirror gets
+# its turn first. Only if none is quick does a slow one get to finish.
+ROUNDS = [["--speed-limit", "262144"], ["--speed-limit", "10240", "--retry", "2"]]
 
 
 def mirror():
@@ -36,12 +41,12 @@ def _native(m):
     bin_dir = os.path.expanduser("~/.local/bin")
     os.makedirs(bin_dir, exist_ok=True)
     failed = []
-    with tempfile.TemporaryDirectory(dir=bin_dir, prefix=".claude-install-") as work:
+    with tempfile.TemporaryDirectory(dir=bin_dir, prefix=".claude-install-", ignore_cleanup_errors=True) as work:
         archive = os.path.join(work, "claude.tgz")
-        for registry in m["registries"]:
+        for registry, limits in [(r, limits) for limits in ROUNDS for r in m["registries"]]:
             url = f"{registry}/{NATIVE}/-/{name}-{pin['version']}.tgz"
-            r = subprocess.run(["/usr/bin/curl", "-fsSL", *CURL_LIMITS, "-o", archive, url],
-                               capture_output=True, text=True)
+            r = subprocess.run([*compat.curl(), "-fsSL", *CURL_LIMITS, *limits, "-o", archive, url],
+                               capture_output=True, encoding="utf-8", errors="replace")
             if r.returncode != 0:
                 failed.append(f"{registry}: curl {r.returncode} {r.stderr.strip()[-200:]}")
                 continue
@@ -52,14 +57,15 @@ def _native(m):
             if base64.b64encode(digest.digest()).decode() != want:
                 failed.append(f"{registry}: hash mismatch")
                 continue
-            target = os.path.join(work, "claude")
+            target = os.path.join(work, PROGRAM)
             with tarfile.open(archive) as tar, open(target, "wb") as out:
-                shutil.copyfileobj(tar.extractfile("package/claude"), out)
+                shutil.copyfileobj(tar.extractfile(f"package/{PROGRAM}"), out)
             os.chmod(target, 0o755)
-            r = subprocess.run([target, "--version"], capture_output=True, text=True, timeout=120)
+            r = subprocess.run([target, "--version"], capture_output=True, encoding="utf-8", errors="replace", timeout=120)
             if r.returncode != 0 or pin["version"] not in r.stdout:
                 return False, f"won't run: exit {r.returncode} {r.stdout.strip()} {r.stderr.strip()[-200:]}"
-            os.replace(target, os.path.join(bin_dir, "claude"))
+            os.replace(target, os.path.join(bin_dir, PROGRAM))
+            compat.add_user_path(bin_dir)
             return True, f"{pin['version']} from {registry}"
     return False, "; ".join(failed)
 
@@ -84,7 +90,7 @@ def install(pid):
         if not shutil.which("npm"):
             return False, "npm not found"
         registry = [f"--registry={m['registries'][0]}"] if m else []
-        r = subprocess.run(["npm", "install", "-g", package, *registry], capture_output=True, text=True)
+        r = subprocess.run(compat.argv(["npm", "install", "-g", package, *registry]), capture_output=True, encoding="utf-8", errors="replace")
         return r.returncode == 0, f"exit {r.returncode} {r.stderr[-300:]}"
     except (OSError, KeyError, ValueError, tarfile.TarError, subprocess.SubprocessError) as e:
         return False, repr(e)

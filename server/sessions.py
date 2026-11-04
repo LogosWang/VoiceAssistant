@@ -4,7 +4,6 @@ What was said is read back from a transcript each client appends to, and for tur
 transcripts existed, from the CLIs' own logs. The app and the extension are separate processes, so
 every change to the store happens under a file lock."""
 import contextlib
-import fcntl
 import glob
 import json
 import os
@@ -14,6 +13,7 @@ import time
 import uuid
 from datetime import datetime
 
+import compat
 import providers
 import shared
 
@@ -34,14 +34,14 @@ def _lock():
         if depth == 0:
             os.makedirs(shared.HOME, exist_ok=True)
             _depth.f = open(FILE + ".lock", "w")
-            fcntl.flock(_depth.f, fcntl.LOCK_EX)
+            compat.lock(_depth.f)
         _depth.n = depth + 1
         try:
             yield
         finally:
             _depth.n -= 1
             if _depth.n == 0:
-                fcntl.flock(_depth.f, fcntl.LOCK_UN)
+                compat.unlock(_depth.f)
                 _depth.f.close()
 
 
@@ -58,7 +58,7 @@ def _write(data):
     tmp = f"{FILE}.{os.getpid()}.tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, FILE)
+    compat.replace(tmp, FILE)
 
 
 def _trim(data):

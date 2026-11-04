@@ -8,7 +8,6 @@ One choice per service, shared by the app, VS Code, the bots and scheduled tasks
 ~/.carnot, read on every turn, so it takes effect from the next message.
 """
 import contextlib
-import fcntl
 import http.server
 import json
 import os
@@ -20,6 +19,7 @@ import time
 import tomllib
 from concurrent.futures import ThreadPoolExecutor
 
+import compat
 import providers
 
 CATALOG = os.path.join(providers.CARNOT_HOME, "models.json")
@@ -43,13 +43,16 @@ def _load(path):
 def _edit(path, change):
     os.makedirs(providers.CARNOT_HOME, exist_ok=True)
     with open(LOCK, "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        data = _load(path)
-        change(data)
-        tmp = f"{path}.{os.getpid()}"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, path)
+        compat.lock(lock)
+        try:
+            data = _load(path)
+            change(data)
+            tmp = f"{path}.{os.getpid()}"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            compat.replace(tmp, path)
+        finally:
+            compat.unlock(lock)
 
 
 def _item(mid, name=None, efforts=(), note=""):
@@ -60,10 +63,10 @@ def _item(mid, name=None, efforts=(), note=""):
 
 def _ask_claude(pid):
     """Claude Code's own start-up handshake. No message is sent, so no model runs."""
-    p = subprocess.Popen([shutil.which("claude"), "-p", "--output-format", "stream-json", "--verbose", "--input-format", "stream-json"],
-                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True,
+    p = subprocess.Popen(compat.argv(["claude", "-p", "--output-format", "stream-json", "--verbose", "--input-format", "stream-json"]),
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, encoding="utf-8", errors="replace",
                          env=providers.apply_env(pid), cwd=providers.CARNOT_HOME)
-    killer = threading.Timer(ASK_TIMEOUT, p.kill)
+    killer = threading.Timer(ASK_TIMEOUT, compat.kill_tree, [p])
     killer.start()
     try:
         p.stdin.write(json.dumps({"type": "control_request", "request_id": "models", "request": {"subtype": "initialize"}}) + "\n")
@@ -78,7 +81,7 @@ def _ask_claude(pid):
             found = []
     finally:
         killer.cancel()
-        p.kill()
+        compat.kill_tree(p)
     items = [{**_item(m.get("value"), m.get("displayName"), m.get("supportedEffortLevels") or [], m.get("description", "")),
               "resolved": m.get("resolvedModel")} for m in found if m.get("value") != "default"]
     if not items:
@@ -94,7 +97,7 @@ def _ask_claude(pid):
 
 def _cli_default_effort(item):
     """The effort Claude Code would send for this model, which it reports nowhere but in the request:
-    it runs once against a throwaway local server that refuses everything. Nothing leaves this Mac."""
+    it runs once against a throwaway local server that refuses everything. Nothing leaves this computer."""
     if not item["efforts"]:
         return None
     got = []
@@ -114,10 +117,10 @@ def _cli_default_effort(item):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     env = {k: v for k, v in providers.apply_env("claude").items() if k != "ANTHROPIC_API_KEY"}
     env.update(ANTHROPIC_BASE_URL=f"http://127.0.0.1:{server.server_address[1]}", ANTHROPIC_AUTH_TOKEN="local", CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC="1")
-    p = subprocess.Popen([shutil.which("claude"), "-p", "--no-session-persistence", "--model", item["id"], "hi"], stdin=subprocess.DEVNULL,
+    p = subprocess.Popen(compat.argv(["claude", "-p", "--no-session-persistence", "--model", item["id"], "hi"]), stdin=subprocess.DEVNULL,
                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env, cwd=providers.CARNOT_HOME)
     done.wait(15)
-    p.kill()
+    compat.kill_tree(p)
     p.wait()
     server.shutdown()
     return got[0] if got else None
@@ -128,9 +131,9 @@ def _json_file(path):
 
 
 def _ask_codex(pid):
-    p = subprocess.Popen([shutil.which("codex"), "app-server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.DEVNULL, text=True, env=providers.apply_env(pid), cwd=providers.CARNOT_HOME)
-    killer = threading.Timer(ASK_TIMEOUT, p.kill)
+    p = subprocess.Popen(compat.argv(["codex", "app-server"]), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.DEVNULL, encoding="utf-8", errors="replace", env=providers.apply_env(pid), cwd=providers.CARNOT_HOME)
+    killer = threading.Timer(ASK_TIMEOUT, compat.kill_tree, [p])
     killer.start()
     found = []
     try:
@@ -146,7 +149,7 @@ def _ask_codex(pid):
                     break
     finally:
         killer.cancel()
-        p.kill()
+        compat.kill_tree(p)
     own = {}
     with contextlib.suppress(OSError, tomllib.TOMLDecodeError):
         with open(os.path.expanduser("~/.codex/config.toml"), "rb") as f:

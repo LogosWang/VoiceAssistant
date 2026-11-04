@@ -1,7 +1,7 @@
 """What an AI can't read as it is gets a version it can, next to the note naming the attachment.
 
 Every client writes attachments the same way, [附件文件：path], so this works for all of them. It uses what
-any Mac has (sips, textutil) and the helper built with the app. Results stay in ~/.carnot/converted, which
+any Mac has (sips, textutil) and the helper built with the app; on Windows, Python packages and FFmpeg. Results stay in ~/.carnot/converted, which
 bots may not upload, for 30 days. A file that can't be converted never stops the turn: the note says so.
 """
 import contextlib
@@ -14,6 +14,7 @@ import shutil
 import subprocess
 import time
 
+import compat
 import shared
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -48,20 +49,106 @@ def _stem(path):
 
 def image(path, out):
     target = os.path.join(out, _stem(path) + ".jpg")
+    if compat.IS_WIN:
+        from PIL import Image, ImageOps
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+        with Image.open(path) as source:
+            picture = ImageOps.exif_transpose(source).convert("RGB")
+        picture.thumbnail((2400, 2400))
+        picture.save(target, "JPEG", quality=90)
+        return f"这种图片格式不能直接读，请读转换后的 JPEG：{target}"
     _run("/usr/bin/sips", "-s", "format", "jpeg", "-Z", "2400", path, "--out", target)
     return f"这种图片格式不能直接读，请读转换后的 JPEG：{target}"
 
 
 def document(path, out):
     target = os.path.join(out, _stem(path) + ".txt")
-    _run("/usr/bin/textutil", "-convert", "txt", "-output", target, path)
+    if compat.IS_WIN:
+        _document_text(path, out, target)
+    else:
+        _run("/usr/bin/textutil", "-convert", "txt", "-output", target, path)
     return f"请读提取出的文字：{target}（图片和版式不在其中）"
 
 
+def _document_text(path, out, target):
+    """Windows has no textutil. Old .doc files need a program that reads them, if there is one."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".docx":
+        import docx
+        book = docx.Document(path)
+        parts = [p.text for p in book.paragraphs]
+        for table in book.tables:
+            parts += ["\t".join(cell.text for cell in row.cells) for row in table.rows]
+        content = "\n".join(parts)
+    elif ext == ".rtf":
+        from striprtf.striprtf import rtf_to_text
+        with open(path, encoding="utf-8", errors="replace") as f:
+            content = rtf_to_text(f.read(), errors="ignore")
+    elif ext == ".odt":
+        import xml.etree.ElementTree as ET
+        import zipfile
+        with zipfile.ZipFile(path) as z:
+            root = ET.fromstring(z.read("content.xml"))
+        text_ns = "{urn:oasis:names:tc:opendocument:xmlns:text:1.0}"
+        content = "\n".join("".join(p.itertext()) for p in root.iter() if p.tag in (text_ns + "p", text_ns + "h"))
+    else:
+        return _old_doc(path, out, target)
+    with open(target, "w", encoding="utf-8") as f:
+        f.write(content)
+
+
+def _old_doc(path, out, target):
+    soffice = shutil.which("soffice") or next(
+        (p for p in (os.path.expandvars(r"%ProgramFiles%\LibreOffice\program\soffice.exe"),) if os.path.exists(p)), None)
+    if soffice:
+        _run(soffice, "--headless", "--convert-to", "txt:Text", "--outdir", out, path)
+        made = os.path.join(out, os.path.splitext(os.path.basename(path))[0] + ".txt")
+        if made != target:
+            os.replace(made, target)
+        return
+    script = ("$w=New-Object -ComObject Word.Application;$w.Visible=$false;"
+              "try{$d=$w.Documents.Open($env:CARNOT_DOC,$false,$true);"
+              "[IO.File]::WriteAllText($env:CARNOT_TXT,$d.Content.Text,[Text.Encoding]::UTF8);$d.Close(0)}finally{$w.Quit()}")
+    r = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script], capture_output=True, timeout=120,
+                       env=dict(os.environ, CARNOT_DOC=path, CARNOT_TXT=target), stdin=subprocess.DEVNULL)
+    if r.returncode or not os.path.exists(target):
+        raise RuntimeError("旧版 .doc 需要这台电脑装有 Word 或 LibreOffice 才能转换")
+
+
+def _video_ffmpeg(path, out):
+    """What the Swift helper reports, from ffprobe and ffmpeg."""
+    probe = json.loads(_run(compat.tool("ffprobe"), "-v", "error", "-print_format", "json", "-show_format", "-show_streams", path))
+    streams = probe.get("streams", [])
+    track = next((s for s in streams if s.get("codec_type") == "video"), None)
+    if not track:
+        raise RuntimeError("no video track")
+    duration = float(probe.get("format", {}).get("duration") or track.get("duration") or 0)
+    width, height = int(track.get("width") or 0), int(track.get("height") or 0)
+    if any(abs(int(d.get("rotation", 0))) == 90 for d in track.get("side_data_list", [])):
+        width, height = height, width
+    frames = []
+    for i in range(FRAMES):
+        second = duration * (i + 0.5) / FRAMES
+        target = os.path.join(out, f"frame_{i + 1:02d}.jpg")
+        fit = "scale='min(1280,iw)':'min(1280,ih)':force_original_aspect_ratio=decrease"
+        with contextlib.suppress(RuntimeError):
+            _run(compat.tool("ffmpeg"), "-v", "error", "-y", "-ss", f"{second:.3f}", "-i", path, "-frames:v", "1", "-vf", fit, "-q:v", "3", target)
+            if os.path.exists(target):
+                frames.append({"second": second, "path": target})
+    return {"duration": duration, "width": width, "height": height, "codec": track.get("codec_name", ""),
+            "audio": any(s.get("codec_type") == "audio" for s in streams), "frames": frames}
+
+
 def video(path, out):
+    if compat.IS_WIN:
+        return _video_note(_video_ffmpeg(path, out))
     if not os.path.exists(FRAMES_HELPER):    # a source checkout; the installer ships it built
         _run("swiftc", "-O", "-o", FRAMES_HELPER, os.path.join(HERE, "videoframes", "main.swift"))
-    info = json.loads(_run(FRAMES_HELPER, path, out, str(FRAMES)))
+    return _video_note(json.loads(_run(FRAMES_HELPER, path, out, str(FRAMES))))
+
+
+def _video_note(info):
     frames = "；".join(f"{f['second']:.1f} 秒：{f['path']}" for f in info["frames"])
     audio = "有音轨，声音内容没有提取" if info["audio"] else "没有音轨"
     return (f"视频不能直接看。时长 {info['duration']:.1f} 秒，{info['width']}×{info['height']}，编码 {info['codec']}，{audio}。"
@@ -81,7 +168,8 @@ def _write_rows(target, rows):
 def sheet(path, out):
     tables = []
     def save(name, rows):
-        target = os.path.join(out, f"{len(tables) + 1}_{re.sub(r'[^\w.-]+', '_', str(name)) or 'sheet'}.csv")
+        safe = re.sub(r"[^\w.-]+", "_", str(name)) or "sheet"
+        target = os.path.join(out, f"{len(tables) + 1}_{safe}.csv")
         tables.append(f"工作表“{name}”，{_write_rows(target, rows)} 行：{target}")
     if path.lower().endswith(".xls"):
         import xlrd

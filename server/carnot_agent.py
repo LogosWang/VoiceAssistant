@@ -26,6 +26,7 @@ import agent_core
 import checkpoints
 import cli_install
 import model_choice
+import compat
 import providers
 import schedules
 import sessions
@@ -68,9 +69,12 @@ def run(args):
     def read_answers():
         for line in sys.stdin:
             with contextlib.suppress(ValueError):
-                answers.put(json.loads(line))
+                message = json.loads(line)
+                if message.get("type") == "stop":  # Windows has no SIGTERM to catch
+                    stop()
+                else:
+                    answers.put(message)
         answers.put(None)
-    threading.Thread(target=read_answers, daemon=True).start()
     agent = agent_core.Agent(
         pid, args.cwd, args.permission, system=SYSTEM, session=sessions.native(sid, pid),
         on_text=on_text, on_session=lambda s: sessions.set_native(sid, pid, s), on_step=on_step, on_permission=on_permission)
@@ -78,6 +82,7 @@ def run(args):
         agent.stop()
         answers.put(None)      # a question still open would hold the turn up forever
     signal.signal(signal.SIGTERM, stop)
+    threading.Thread(target=read_answers, daemon=True).start()
     text = first.get("text", "")
     if not args.retry:                # a retry repeats a turn already written down
         sessions.touch(sid, text)
@@ -107,7 +112,7 @@ def remember_commands(step):
         tmp = COMMANDS_CACHE + f".{os.getpid()}"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(names, f, ensure_ascii=False)
-        os.replace(tmp, COMMANDS_CACHE)
+        compat.replace(tmp, COMMANDS_CACHE)
 
 
 def known_commands():
@@ -142,6 +147,7 @@ def schedule_command(args):
 
 
 def main():
+    compat.utf8_stdio()
     providers.fix_path()
     shared.seed_memory()
     shared.sync_skills()
@@ -249,14 +255,14 @@ def main():
             providers.open_terminal(providers.PROVIDERS[args.provider]["cli"])
             out(type="terminal")
         else:
-            rc = subprocess.run(cmd, env=providers.apply_env(args.provider), stdin=subprocess.DEVNULL,
+            rc = subprocess.run(compat.argv(cmd), env=providers.apply_env(args.provider), stdin=subprocess.DEVNULL,
                                 capture_output=True, timeout=600).returncode
             out(type="ok" if rc == 0 else "failed", rc=rc)
     elif args.action == "logout":
         if args.provider == "claude":
-            subprocess.run(["claude", "auth", "logout"], capture_output=True)
+            subprocess.run(compat.argv(["claude", "auth", "logout"]), capture_output=True)
         elif args.provider == "chatgpt":
-            subprocess.run(["codex", "logout"], capture_output=True)
+            subprocess.run(compat.argv(["codex", "logout"]), capture_output=True)
         elif args.provider == "gemini":
             path = os.path.expanduser("~/.gemini/oauth_creds.json")
             if os.path.exists(path):

@@ -11,3 +11,8 @@ h5py
 openpyxl
 xlrd
 pypdf
+mss; sys_platform == "win32"
+pillow; sys_platform == "win32"
+pillow-heif; sys_platform == "win32"
+python-docx; sys_platform == "win32"
+striprtf; sys_platform == "win32"

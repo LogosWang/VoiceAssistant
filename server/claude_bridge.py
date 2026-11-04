@@ -8,6 +8,7 @@ import time
 
 
 import agent_core
+import compat
 import events
 import providers
 import sessions
@@ -38,6 +39,7 @@ class ClaudeBridge:
         self.session_id = self._load_session()
         self._q = queue.Queue()
         self._proc = None  # a login in progress
+        self._login_stopped = False
         self._agent = None
         self._running = False
         self._muted = False  # barge-in: the rest of the current reply is not spoken
@@ -70,7 +72,8 @@ class ClaudeBridge:
         while not self._q.empty():
             self._q.get_nowait()
         if self._proc and self._proc.poll() is None:
-            self._proc.terminate()
+            self._login_stopped = True
+            compat.stop_process(self._proc)
         if self._agent:
             self._agent.stop()
         self.on_change()
@@ -181,19 +184,20 @@ class ClaudeBridge:
         return False
 
     def _sign_in(self, cmd, pid):
-        out = tempfile.TemporaryFile(mode="w+")
-        self._proc = subprocess.Popen(cmd, cwd=self.workdir, text=True, env=providers.apply_env(pid),
+        out = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+        self._login_stopped = False
+        self._proc = subprocess.Popen(compat.argv(cmd), cwd=self.workdir, text=True, encoding="utf-8", errors="replace", env=providers.apply_env(pid),
                                       stdin=subprocess.DEVNULL, stdout=out, stderr=out)
         try:
             rc = self._proc.wait(timeout=LOGIN_TIMEOUT)
         except subprocess.TimeoutExpired:
-            self._proc.terminate()
+            compat.stop_process(self._proc)
             rc = self._proc.wait()
         if rc == 0:
             return True
         out.seek(0)
         self.log(f"[{pid}] login failed ({rc}): {out.read().strip()[-300:]}")
-        if rc != -15:  # -15 = stopped by voice command
+        if rc != -15 and not self._login_stopped:  # stopped by voice command
             self.speaker.say("登录没有完成，刚才的指令没有执行")
         return False
 
@@ -203,14 +207,14 @@ class ClaudeBridge:
         if not cmd:
             providers.open_terminal(providers.PROVIDERS[pid]["cli"])
             return
-        subprocess.run(cmd, cwd=self.workdir, env=providers.apply_env(pid), stdin=subprocess.DEVNULL,
+        subprocess.run(compat.argv(cmd), cwd=self.workdir, env=providers.apply_env(pid), stdin=subprocess.DEVNULL,
                        capture_output=True, timeout=LOGIN_TIMEOUT)
 
     def sign_out(self, pid):
         if pid == "claude":
-            subprocess.run(["claude", "auth", "logout"], capture_output=True)
+            subprocess.run(compat.argv(["claude", "auth", "logout"]), capture_output=True)
         elif pid == "chatgpt":
-            subprocess.run(["codex", "logout"], capture_output=True)
+            subprocess.run(compat.argv(["codex", "logout"]), capture_output=True)
         elif pid == "gemini":
             path = os.path.expanduser("~/.gemini/oauth_creds.json")
             if os.path.exists(path):

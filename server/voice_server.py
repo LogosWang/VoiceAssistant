@@ -1,7 +1,7 @@
 """VoiceInput server: ESP32 mic stream -> wake word -> ASR -> Claude Code -> spoken reply.
 
     python voice_server.py              # listen for the ESP32
-    python voice_server.py --mic        # use the Mac's microphone instead (testing)
+    python voice_server.py --mic        # use this computer's microphone instead (testing)
     python voice_server.py --wav a.wav  # feed a 16 kHz mono wav file (testing)
     python voice_server.py --dry-run    # print transcripts, don't run Claude
 """
@@ -28,12 +28,13 @@ from pypinyin import lazy_pinyin
 import bots
 import cli_install
 import model_choice
+import compat
 import schedules
 import events
 import providers
 import sessions
 import shared
-from aec import EchoCanceller
+from aec import EchoCanceller, HelperMic
 from claude_bridge import ClaudeBridge
 from tts import Speaker
 from vision import Vision
@@ -45,7 +46,7 @@ KWS_DIR = os.path.join(MODELS, "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20") 
 ASR_DIR = os.path.join(MODELS, "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17")
 VAD_MODEL = os.path.join(MODELS, "silero_vad.onnx")
 PREROLL = int(0.4 * SR)  # audio kept from just before the wake word fired
-VOICE_FILE = os.path.join(HERE, ".voice_off")  # exists = voice mode off
+VOICE_FILE = os.path.join(compat.state_dir(), ".voice_off")  # exists = voice mode off
 PARTIAL_EVERY = 0.6  # seconds between live subtitle updates while recording
 STATES = {"L": "listening", "S": "speaking", "B": "thinking", "I": "idle"}
 
@@ -60,17 +61,10 @@ SCREEN_ON = ("看屏幕", "看我的屏幕", "看一下屏幕", "看看屏幕", 
 SWITCH_WORDS = ("切换到", "切换成", "换成", "换到", "改用")
 PROVIDER_WORDS = {"claude": "claude", "克劳德": "claude", "chatgpt": "chatgpt", "gpt": "chatgpt", "gemini": "gemini",
                   "zcode": "zcode", "智谱": "zcode", "deepseek": "deepseek", "豆包": "doubao"}
-BEEP_WAKE = "/System/Library/Sounds/Tink.aiff"
-BEEP_DONE = "/System/Library/Sounds/Pop.aiff"
-BEEP_CANCEL = "/System/Library/Sounds/Basso.aiff"
 
 
 def log(msg):
     print(time.strftime("%H:%M:%S"), msg, flush=True)
-
-
-def beep(path):
-    subprocess.Popen(["afplay", path])
 
 
 def kws_model(part):
@@ -190,6 +184,7 @@ class Assistant:
         self.speaker = Speaker(cfg["tts"], self.refresh_state)
         self.vision = Vision(cfg["vision"], log)
         self.aec = None
+        self.mic = None  # Windows: the helper the mic comes through
         self.aec_refused = False
         if self.voice_on:
             self._start_aec()
@@ -205,7 +200,7 @@ class Assistant:
     def _write_keywords(self):
         """One keyword line per pronunciation: Chinese as characters, English as CMU phones."""
         tokens_txt = os.path.join(KWS_DIR, "tokens.txt")
-        vocab = {line.split()[0] for line in open(tokens_txt)}
+        vocab = {line.split()[0] for line in open(tokens_txt, encoding="utf-8")}
         lines = []
         for p in self.cfg["wake"]["pronunciations"]:
             toks = (sherpa_onnx.text2token([p], tokens=tokens_txt, tokens_type="ppinyin")[0]
@@ -214,7 +209,7 @@ class Assistant:
             assert not bad, f"pronunciation {p!r}: unknown tokens {bad}"
             lines.append(f"{' '.join(toks)} @{self.label}")
         path = os.path.join(MODELS, "keywords.generated.txt")
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             f.write("\n".join(lines) + "\n")
         return path
 
@@ -255,7 +250,7 @@ class Assistant:
     # ---------- audio pipeline ----------
 
     def feed(self, samples, t0=None):
-        """Live audio entry point: removes what the Mac is playing, then processes.
+        """Live audio entry point: removes what the computer is playing, then processes.
         t0: host time the first sample was recorded (None: estimated from arrival)."""
         if not self.voice_on:
             return
@@ -341,7 +336,7 @@ class Assistant:
         self._start_recording(self.history, self.cfg["record"]["start_timeout"])
 
     def _start_recording(self, preroll, start_timeout, follow_up=False):
-        beep(BEEP_WAKE)
+        compat.beep("wake")
         self.skip_follow_up = False
         self.recording = {
             "audio": [preroll], "n": 0, "started": False, "start_timeout": start_timeout,
@@ -373,7 +368,7 @@ class Assistant:
         if not r["started"] and secs > r["start_timeout"]:
             log("[wake] no speech, back to standby")
             if not r["follow_up"]:  # a follow-up just ends quietly
-                beep(BEEP_CANCEL)
+                compat.beep("cancel")
             self._save(np.concatenate(r["audio"]), "nospeech")
             self._end_recording()
         elif secs > rc["max_seconds"]:
@@ -416,7 +411,7 @@ class Assistant:
         audio = np.concatenate(self.recording["audio"])
         self._save(audio, "command")
         self._end_recording()
-        beep(BEEP_DONE)
+        compat.beep("done")
         raw = self._transcribe(audio)
         text = strip_wake(raw, self.names)
         log(f"[asr] {raw!r} -> {text!r}")
@@ -458,7 +453,7 @@ class Assistant:
         except Exception as e:
             self.aec_refused = True  # trying again would only bring up the system's dialog again
             log(f"[aec] off: {e}")
-            events.emit("notice", text="回声消除未开启，请检查“屏幕与系统录音”权限")
+            events.emit("notice", text="回声消除未开启，详情请看日志" if compat.IS_WIN else "回声消除未开启，请检查“屏幕与系统录音”权限")
 
     def _restart_without_mic(self):
         """Stopping a stream in-process can deadlock inside CoreAudio: Pa_StopStream waits on the HAL
@@ -509,6 +504,21 @@ class Assistant:
                 log(f"[app] {kind} failed: {type(e).__name__}")
                 events.emit("notice", text="操作失败，详情请看日志", hold=8000)
             self._report_providers()
+        if compat.IS_WIN:  # the app closed its end: this is how it asks a Windows process to quit
+            self.leave()
+
+    def leave(self):
+        """Windows has no signal to catch, so what main() does on SIGTERM is also callable. When the app
+        died the stdout pipe is gone, and any of this may fail writing to it; it must still exit."""
+        steps = [self.bridge.stop, self.speaker.stop, self.vision.close]
+        steps += [x for x in (self.schedules and self.schedules.stop, self.aec and self.aec.close,
+                              self.mic and self.mic.close) if x]
+        for step in steps:
+            try:
+                step()
+            except Exception:
+                pass
+        os._exit(0)
 
     def _app_command(self, kind, m):
         pid = m.get("provider")
@@ -760,7 +770,40 @@ class Assistant:
             if msg == b"VOICEINPUT?":
                 udp.sendto(b"VOICEINPUT!", addr)
 
+    def _serve_helper_mic(self):
+        """Windows. Turning voice off simply ends the helpers; CoreAudio's deadlock isn't an issue here."""
+        import queue
+        q = queue.Queue()
+        retry_at = 0.0
+        want = self.cfg.get("mic", {}).get("device", "")
+        while True:
+            if self.voice_on and not (self.mic and self.mic.alive) and time.monotonic() >= retry_at:
+                try:
+                    self.mic = HelperMic(want, lambda x, t: q.put((x, t)), log)
+                    self._start_aec()
+                except (RuntimeError, OSError) as e:
+                    self.mic = None
+                    retry_at = time.monotonic() + 10
+                    log(f"[mic] {e}")
+                    events.emit("notice", text="打不开麦克风，请在 Windows 设置 → 隐私和安全性 → 麦克风里允许桌面应用使用", hold=9000)
+            elif not self.voice_on and self.mic:
+                if self.recording is not None:
+                    self._end_recording()
+                self.follow_up_due = False
+                self.mic.close()
+                self.mic = None
+                if self.aec:
+                    self.aec.close()
+                    self.aec = None
+            try:
+                block = q.get(timeout=0.2)
+            except queue.Empty:
+                continue
+            self.feed(*block)
+
     def serve_mic(self):
+        if compat.IS_WIN:
+            return self._serve_helper_mic()
         import queue
         import sounddevice as sd
         q = queue.Queue()
@@ -824,15 +867,16 @@ def with_defaults(cfg):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default=os.path.join(HERE, "config.toml"))
-    ap.add_argument("--mic", action="store_true", help="use the Mac microphone instead of the ESP32")
+    ap.add_argument("--config", default=compat.config_path())
+    ap.add_argument("--mic", action="store_true", help="use this computer's microphone instead of the ESP32")
     ap.add_argument("--wav", help="feed a 16 kHz mono wav file")
     ap.add_argument("--dry-run", action="store_true", help="don't send commands to Claude")
     ap.add_argument("--save-dir", help="save every recording as a wav here (debugging)")
     ap.add_argument("--ui", action="store_true", help="print events for the desktop UI on stdout")
     args = ap.parse_args()
-    with open(args.config, "rb") as f:
-        cfg = with_defaults(tomllib.load(f))
+    compat.utf8_stdio()
+    with open(args.config, encoding="utf-8-sig") as f:  # some Windows editors save with a byte order mark
+        cfg = with_defaults(tomllib.loads(f.read()))
     events.enabled = args.ui
     sessions.migrate(HERE)
     cfg["claude"]["permission_mode"] = providers.current_permission(cfg["claude"].get("permission_mode"))
@@ -856,11 +900,9 @@ def main():
         threading.Thread(target=a._read_commands, daemon=True).start()
         a._report_providers()
         # the app died without telling us: don't keep listening on the mic
-        parent = os.getppid()
         def watch():
-            while os.getppid() == parent:
-                time.sleep(2)
-            os.kill(os.getpid(), signal.SIGTERM)
+            compat.wait_for_parent_exit()
+            a.leave() if compat.IS_WIN else os.kill(os.getpid(), signal.SIGTERM)
         threading.Thread(target=watch, daemon=True).start()
     try:
         if args.wav:
@@ -878,6 +920,8 @@ def main():
         a.vision.close()
         if a.aec:
             a.aec.close()
+        if a.mic:
+            a.mic.close()
         sys.stdout.flush()
         os._exit(0)  # not through interpreter exit: closing the mic stream there can deadlock too
 

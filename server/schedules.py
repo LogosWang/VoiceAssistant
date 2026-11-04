@@ -5,15 +5,14 @@ written to one conversation per task. Nobody is there to approve anything, so th
 """
 import contextlib
 import datetime
-import fcntl
 import json
 import os
-import subprocess
 import threading
 import time
 import uuid
 
 import agent_core
+import compat
 import events
 import providers
 import sessions
@@ -98,7 +97,7 @@ def clean(raw, default_dir):
 def _locked():
     os.makedirs(shared.SCHEDULES_DIR, mode=0o700, exist_ok=True)
     with open(LOCK, "w") as f:
-        fcntl.flock(f, fcntl.LOCK_EX)
+        compat.lock(f)
         if os.path.exists(OLD_STORE) and not os.path.exists(STORE):
             os.replace(OLD_STORE, STORE)
         yield
@@ -116,7 +115,7 @@ def _write(tasks):
     tmp = STORE + ".tmp"
     with open(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w", encoding="utf-8") as f:
         json.dump(tasks, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, STORE)
+    compat.replace(tmp, STORE)
 
 
 @contextlib.contextmanager
@@ -387,5 +386,4 @@ class Manager:
 
 def _notify(text):
     """The name of the task is all that shows; the result stays in the app."""
-    script = 'on run argv\ndisplay notification (item 1 of argv) with title "Carnot"\nend run'
-    subprocess.Popen(["/usr/bin/osascript", "-e", script, text], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    compat.notify("Carnot", text)

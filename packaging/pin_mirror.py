@@ -7,11 +7,12 @@ import sys
 
 OFFICIAL = "https://registry.npmjs.org"
 MIRRORS = ["https://registry.npmmirror.com", "https://repo.huaweicloud.com/repository/npm"]
-NATIVE = "@anthropic-ai/claude-code-darwin-arm64"
+NATIVE = "@anthropic-ai/claude-code-win32-x64" if sys.platform == "win32" else "@anthropic-ai/claude-code-darwin-arm64"
+CURL = "curl.exe" if sys.platform == "win32" else "/usr/bin/curl"
 
 
 def fetch(url):
-    r = subprocess.run(["/usr/bin/curl", "-fsSL", "--max-time", "60", url], capture_output=True, text=True)
+    r = subprocess.run([CURL, "-fsSL", "--max-time", "60", url], capture_output=True, encoding="utf-8", errors="replace")
     return json.loads(r.stdout) if r.returncode == 0 else None
 
 

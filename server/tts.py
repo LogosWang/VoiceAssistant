@@ -1,4 +1,5 @@
-"""Sentence-queued TTS, interruptible. Neural voices via edge-tts, macOS `say` as fallback."""
+"""Sentence-queued TTS, interruptible. Neural voices via edge-tts, the system voice as fallback."""
+import contextlib
 import os
 import queue
 import re
@@ -6,6 +7,7 @@ import subprocess
 import tempfile
 import threading
 
+import compat
 import events
 
 
@@ -65,34 +67,43 @@ class Speaker:
         n = 0
         while True:
             gen, text = self._synth_q.get()
-            cmd = ["say", "-v", self.cfg["say_voice"], "-r", str(self.cfg["say_rate"]), text]
+            n += 1
+            cmd, sound = None, None
             if self.cfg["engine"] == "edge":
-                n += 1
                 path = os.path.join(self._tmp, f"{n}.mp3")
                 try:
                     self._edge.Communicate(text, self.cfg["edge_voice"],
                                            rate=self.cfg["edge_rate"]).save_sync(path)
-                    cmd = ["afplay", path]
+                    cmd, sound = compat.play_command(path), path
                 except Exception as e:
-                    print(f"[tts] edge-tts failed ({e}), falling back to say", flush=True)
+                    print(f"[tts] edge-tts failed ({e}), falling back to the system voice", flush=True)
+            cmd = cmd or compat.say_command(text, self.cfg, self._tmp, n)
             with self._lock:
                 if gen == self._gen:
-                    self._play_q.put((gen, cmd, text))
+                    self._play_q.put((gen, cmd, text, sound))
                     continue
+            if sound:
+                os.remove(sound)
             self._drop()
 
     def _play_loop(self):
         while True:
-            gen, cmd, text = self._play_q.get()
+            gen, cmd, text, sound = self._play_q.get()
+            started = False
             with self._lock:
                 stale = gen != self._gen
                 if not stale:
                     events.emit("reply", text=text)  # subtitle appears as the sentence starts playing
-                    self._proc = subprocess.Popen(cmd)
-            if not stale:
+                    try:
+                        self._proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL)
+                        started = True
+                    except OSError as e:
+                        print(f"[tts] cannot play: {e}", flush=True)
+            if started:
                 self._proc.wait()
-            if cmd[0] == "afplay":
-                os.remove(cmd[1])
+            if sound:
+                with contextlib.suppress(OSError):  # Windows may hold it a moment after a stop
+                    os.remove(sound)
             self._drop()
 
 

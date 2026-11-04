@@ -1,6 +1,6 @@
 # Carnot
 
-macOS 桌面助手：屏幕上常驻一个人物，可以语音唤醒，也可以打字。接入 Claude、ChatGPT、Gemini、ZCode、DeepSeek、豆包，桌面 App 和 VS Code 插件共用同一套记忆和 skill。
+macOS 和 Windows 桌面助手：屏幕上常驻一个人物，可以语音唤醒，也可以打字。接入 Claude、ChatGPT、Gemini、ZCode、DeepSeek、豆包，桌面 App 和 VS Code 插件共用同一套记忆和 skill。
 
 - **语音：** 喊 "Carnot"（卡诺）唤醒，语音识别在本机离线运行。回声消除会去掉电脑正在播放的声音，不影响音量和音质。
 - **界面：** 悬浮在所有桌面之上，带字幕和输入框，可附加文件和文件夹；思考时身后的蒸汽机会运转，活塞经摇臂和连杆带动飞轮。
@@ -39,6 +39,27 @@ git clone https://github.com/LogosWang/VoiceAssistant.git ~/.claude/skills/carno
 
 App 默认开机自启，可以在菜单栏图标或右键人物的菜单里关闭。
 
+### Windows
+
+下载 `Carnot-Setup.exe`，双击安装，不需要管理员权限，也不用装开发工具，语音模型和运行环境都在包里。要求 64 位 Windows 10 或 11。安装时如果缺 Claude Code 或 Git，会自动下载（需要联网）；如果装了 VS Code，会一并装好插件。
+
+这个安装包没有代码签名，第一次运行 SmartScreen 会拦下：点“更多信息”，再点“仍要运行”。
+
+**更新：** 直接运行新的安装包就会覆盖更新，不用卸载。它会自动退出正在运行的 Carnot，设置、登录、对话和开机自启都会保留。VS Code 需要重新加载窗口。
+
+**国内网络：** 用 `Carnot-Setup-CN.exe`，内容相同，只是从 npmmirror（备用华为云）下载 Claude Code，下载内容按打包时与官方核对过的校验值验证，不需要 Node；Git 也优先走 npmmirror，连接设置里的“安装”按钮同样走镜像。Claude 官方账号在部分地区不可用，这种情况下请在连接设置里选 ZCode、DeepSeek 或豆包，填它们的 API Key；它们同样运行在这份 Claude Code 上，不需要登录 Anthropic 账号。回复朗读默认用微软的 edge-tts，连不上时自动换成系统语音。
+
+和 Mac 版的区别：
+
+- **麦克风：** 默认麦克风是 Steam 这类虚拟设备时，会自动换成真实的麦克风。要指定设备，在设置文件的 `[mic] device` 里写设备名的一部分。没有声音时，看一下“设置 → 隐私和安全性 → 麦克风”是否允许桌面应用使用。
+- **输入框：** 打字时窗口会短暂取得焦点，关闭输入框后焦点回到原来的程序。
+- **全屏：** 能盖住无边框全屏的程序，盖不住独占全屏的游戏。切换虚拟桌面时，人物会在半秒内跟过来。
+- **附加文件夹：** 点附件按钮时先选“文件”或“文件夹”。
+- **旧版 `.doc`：** 需要电脑上装有 Word 或 LibreOffice 才能转换，`.docx` 不需要。
+- **数据位置：** 设置文件在 `~/.carnot/config.toml`，日志在 `~/.carnot/logs/carnot.log`，API Key 和 Token 在 Windows 凭据管理器里（名称以 `carnot-voice/` 开头）。
+
+卸载：在“设置 → 应用”里卸载 Carnot，VS Code 插件和开机自启项会一起移除；Claude Code、Git 不会动。记忆、设置和对话记录留在 `~/.carnot`，要不要删由你决定。
+
 ## 接入的 AI
 
 | AI | 登录方式 | 运行方式 |
@@ -50,7 +71,7 @@ App 默认开机自启，可以在菜单栏图标或右键人物的菜单里关�
 | DeepSeek | API Key | Claude Code + DeepSeek 接口 |
 | 豆包 | 火山方舟 Coding Plan 的 API Key | Claude Code + 方舟接口 |
 
-API Key 只存在本机钥匙串里。
+API Key 只存在本机的系统凭据库里（macOS 钥匙串、Windows 凭据管理器）。
 
 ## 自己构建安装包
 
@@ -60,12 +81,21 @@ packaging/build_pkg.sh    # 生成 dist/Carnot-Installer.pkg
 
 需要 Apple 芯片、Xcode 命令行工具和 Node，并且先运行过一次 `app/build.sh`（它会创建签名证书）。安装包约 200 MB，不要提交进 git，请作为 GitHub Release 发布。
 
+Windows 版见 [windows/](windows/)：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File windows\build.ps1          # 生成 dist\Carnot-Setup.exe
+powershell -ExecutionPolicy Bypass -File windows\build.ps1 -Mirror  # 生成 dist\Carnot-Setup-CN.exe（国内镜像版）
+```
+
+构建机需要的工具列在 `windows/env.ps1` 开头，都不需要管理员权限。安装包约 400 MB，同样不要提交进 git。
+
 ## 需要知道
 
 - **权限：** 默认"自动"，常规操作自动进行，高风险操作会被拦下。在 App 的连接设置和 VS Code 聊天框里都可以切换（只读规划、可改文件、自动、完全放行；VS Code 里还有“每次询问”），两边各自独立，从下一条指令开始生效。"完全放行"后 AI 可以不经确认执行任何操作，而旁边任何人都能喊唤醒词，切换时会要求确认；没有语音指令可以改权限。
 - **远程机器人：** 能给机器人发消息，就可能操作这台电脑。所以必须先用电脑屏幕上的配对码配对，只接受私聊，权限最高到"自动"，不能完全放行；Token 只存在钥匙串里。密钥、凭据和 `.env` 这类文件不能作为文件发出，但这不是完整的防护：AI 读到的内容仍可能写进文字回复。回复不朗读，屏幕也不显示消息内容。电脑要开着、Carnot 要在运行。飞书需要企业自建应用并启用长连接；停用飞书机器人后连接要到重启才断开，这期间只是忽略消息。
 - **数据：** 指令、附件、记忆索引和 AI 打开的记忆文件，都会发给你选的那家 AI；回复文字默认由 edge-tts 转语音，会发给微软。
-- **屏幕录制图标：** 回声消除要读取系统音频，所以运行时菜单栏会显示录屏图标。点输入框上的麦克风按钮关闭语音模式后，麦克风和音频采集都会停止。
+- **屏幕录制图标（Mac）：** 回声消除要读取系统音频，所以运行时菜单栏会显示录屏图标。点输入框上的麦克风按钮关闭语音模式后，麦克风和音频采集都会停止。
 - **对话记录：** 保存在本机 `~/.carnot/transcripts`，明文，不会自动清理。
 - **记忆不跨电脑同步：** 换电脑要自己带上 `~/.carnot/memory`。
 

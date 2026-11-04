@@ -24,6 +24,8 @@ import time
 
 import numpy as np
 
+import compat
+
 SR = 16000
 FRAME = SR // 100        # 10 ms
 REF_KEEP = 4 * SR        # reference history kept for alignment
@@ -33,6 +35,7 @@ EST_LEN = 3 * SR         # audio used for one delay check
 EST_RANGE = int(0.5 * SR)
 HERE = os.path.dirname(os.path.abspath(__file__))
 SYSCAP = os.path.join(HERE, "syscap", "syscap")
+AUDIO_HELPER = compat.tool("carnot-audio")  # Windows: system audio and the mic, on one clock
 
 
 class Clock:
@@ -62,12 +65,12 @@ class SpeexAEC:
 
     def __init__(self, tail_ms):
         path = next(
-            (p for p in (os.path.join(HERE, "lib", "libspeexdsp.dylib"),  # the installer package's own copy
+            (p for p in (os.path.join(HERE, "lib", "libspeexdsp.dll" if compat.IS_WIN else "libspeexdsp.dylib"),  # the installer's own copy
                          ctypes.util.find_library("speexdsp") or "",
                          "/opt/homebrew/lib/libspeexdsp.dylib", "/usr/local/lib/libspeexdsp.dylib")
              if os.path.exists(p)), None)  # Apple silicon / Intel Homebrew
         if not path:
-            raise RuntimeError("libspeexdsp not found, run: brew install speexdsp")
+            raise RuntimeError("libspeexdsp not found" + ("" if compat.IS_WIN else ", run: brew install speexdsp"))
         lib = self.lib = ctypes.CDLL(path)
         lib.speex_echo_state_init.restype = ctypes.c_void_p
         lib.speex_echo_state_init.argtypes = [ctypes.c_int, ctypes.c_int]
@@ -130,12 +133,16 @@ class EchoCanceller:
     # ---------- reference: system audio ----------
 
     def _start(self):
-        if not os.path.exists(SYSCAP):
-            src = os.path.join(os.path.dirname(SYSCAP), "main.swift")
-            r = subprocess.run(["swiftc", "-O", "-o", SYSCAP, src], capture_output=True, text=True)
-            if r.returncode:
-                raise RuntimeError(f"cannot build syscap (xcode-select --install?): {r.stderr[-300:]}")
-        self.proc = subprocess.Popen([SYSCAP], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if compat.IS_WIN:
+            cmd = [AUDIO_HELPER, "loopback"]
+        else:
+            cmd = [SYSCAP]
+            if not os.path.exists(SYSCAP):
+                src = os.path.join(os.path.dirname(SYSCAP), "main.swift")
+                r = subprocess.run(["swiftc", "-O", "-o", SYSCAP, src], capture_output=True, text=True)
+                if r.returncode:
+                    raise RuntimeError(f"cannot build syscap (xcode-select --install?): {r.stderr[-300:]}")
+        self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         line = self.proc.stderr.readline().decode().strip()  # "capturing" or the error
         if line != "capturing":
             self.proc.kill()
@@ -176,7 +183,7 @@ class EchoCanceller:
     def process(self, x, t0=None, now=None):
         """x: mic samples as they come in, the first recorded at host time t0 (None: estimate it
         from arrival). Returns echo-free audio; it can lag a little while waiting for reference."""
-        now = time.monotonic() if now is None else now
+        now = compat.host_time() if now is None else now
         if t0 is None:
             n_end = self.mic_n + sum(len(p[0]) for p in self.pending) + len(x)
             self.mic_clock.update(n_end, now)
@@ -245,8 +252,8 @@ class EchoCanceller:
                      f"(delay {self.delay * 1000:.0f} ms)")
 
     def media_playing(self):
-        """Whether the Mac was playing anything a moment ago."""
-        now = time.monotonic()
+        """Whether the computer was playing anything a moment ago."""
+        now = compat.host_time()
         with self.lock:
             recent = self.ref[(self.ref_t > now - 0.8) & (self.ref_t < now - 0.1)]
         return len(recent) > 0 and float(np.sqrt(np.mean(recent ** 2))) > 1e-3
@@ -259,6 +266,40 @@ class EchoCanceller:
 
     def close(self):
         if self.proc and self.proc.poll() is None:
+            self.proc.terminate()
+
+
+class HelperMic:
+    """Windows: the mic through the same helper as the reference, so both carry the same timestamps.
+    Closing it just ends the helper, which lets the system release the mic."""
+
+    def __init__(self, device, on_block, log):
+        self.proc = subprocess.Popen([AUDIO_HELPER, "mic", device], stdin=subprocess.DEVNULL,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        line = self.proc.stderr.readline().decode("utf-8", "replace").strip()
+        if line != "capturing":
+            self.proc.kill()
+            raise RuntimeError(line or "the audio helper exited")
+        self.on_block, self.log = on_block, log
+        threading.Thread(target=self._read, daemon=True).start()
+        threading.Thread(target=self._notes, daemon=True).start()
+
+    @property
+    def alive(self):
+        return self.proc.poll() is None
+
+    def _read(self):
+        f = self.proc.stdout
+        while len(head := f.read(12)) == 12:
+            pts, n = struct.unpack("<dI", head)
+            self.on_block(np.frombuffer(f.read(4 * n), np.float32), pts)
+
+    def _notes(self):
+        for line in self.proc.stderr:
+            self.log("[mic] " + line.decode("utf-8", "replace").strip())
+
+    def close(self):
+        if self.alive:
             self.proc.terminate()
 
 

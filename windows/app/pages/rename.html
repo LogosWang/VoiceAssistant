@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh"><head><meta charset="utf-8"><title>重命名这个对话</title>
+<style>
+html,body{margin:0;height:100%;background:#18161c;color:#efe8da;font:14px "Microsoft YaHei",sans-serif}
+form{display:flex;flex-direction:column;gap:12px;padding:16px}
+input{background:#100f13;color:#efe8da;border:1px solid #57503f;border-radius:2px;padding:6px 8px;font:inherit;outline:0}
+input:focus{border-color:#c49a52}
+div{display:flex;justify-content:flex-end;gap:8px}
+button{background:#2c2620;color:#e8cf9b;border:1px solid #c49a52;border-radius:2px;padding:4px 14px;font:inherit;cursor:pointer}
+</style></head><body>
+<form id="form"><input id="title" autofocus maxlength="200"><div><button type="button" id="cancel">取消</button><button>确定</button></div></form>
+<script>
+const native = m => window.webkit.messageHandlers.carnot.postMessage(m);
+const title = document.getElementById("title");
+title.value = window.carnotRename.title;
+title.select();
+document.getElementById("form").onsubmit = e => {
+  e.preventDefault();
+  native({type: "server", payload: {type: "session_rename", id: window.carnotRename.id, title: title.value}});
+  native({type: "closeRename"});
+};
+document.getElementById("cancel").onclick = () => native({type: "closeRename"});
+addEventListener("keydown", e => { if (e.key === "Escape") native({type: "closeRename"}); });
+</script></body></html>

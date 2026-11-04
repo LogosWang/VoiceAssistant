@@ -20,3 +20,10 @@ server/.voice_off
 
 # the installer package: too big for git, publish it as a GitHub Release
 dist/
+
+# Windows build
+server/bin/
+server/lib/
+windows/**/target/
+windows/app/dist/
+windows/app/gen/

@@ -9,6 +9,7 @@ import tempfile
 import time
 
 import attachments
+import compat
 import model_choice
 import providers
 import shared
@@ -162,7 +163,7 @@ class Agent:
         system = "\n\n".join(s for s in (self.system, shared.memory_prompt()) if s)
         # Claude Code's own per-project memory would split what's remembered
         cmd = [cli, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
-               "--permission-mode", mode, "--append-system-prompt", system,
+               "--permission-mode", mode, *self._system_flag(system),
                "--settings", json.dumps({"autoMemoryEnabled": False})]
         # these die with the session; the shared list is schedules.py, as the system prompt says
         cmd.append("--disallowedTools=CronCreate,CronDelete,CronList,ScheduleWakeup")
@@ -179,6 +180,16 @@ class Agent:
         if sid:
             cmd += ["--resume", sid]
         return cmd
+
+    def _system_flag(self, system):
+        """A Windows command line ends at 32767 characters, and memory keeps growing."""
+        if not compat.IS_WIN or len(system) < 20000:
+            return ["--append-system-prompt", system]
+        os.makedirs(shared.HOME, exist_ok=True)
+        path = os.path.join(shared.HOME, f"system-prompt-{os.getpid()}.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(system)
+        return ["--append-system-prompt-file", path]
 
     def _prompt(self, text):
         """CLIs without a system prompt flag get the shared context with the message, every turn,
@@ -325,8 +336,8 @@ class Agent:
         st = {"t0": time.time()}
         auth_failed = False
         handler = getattr(self, f"_{p['engine']}_event")
-        errf = tempfile.TemporaryFile(mode="w+")
-        self.proc = subprocess.Popen(self.command(list(dirs)), cwd=self.workdir, text=True, bufsize=1,
+        errf = tempfile.TemporaryFile(mode="w+", encoding="utf-8", errors="replace")
+        self.proc = subprocess.Popen(compat.argv(self.command(list(dirs))), cwd=self.workdir, text=True, encoding="utf-8", errors="replace", bufsize=1,
                                      env=providers.apply_env(self.provider), stdin=subprocess.PIPE,
                                      stdout=subprocess.PIPE, stderr=errf)
         stays_open = self.on_permission and p["engine"] == "claude"
@@ -345,7 +356,7 @@ class Agent:
                 continue
             if self.is_auth_error(ev):
                 auth_failed = True  # it would only retry for a minute with the same credentials
-                self.proc.terminate()
+                compat.stop_process(self.proc)
                 break  # not waiting for end of file: a child of the CLI may hold the pipe open
             handler(ev, st)
             if stays_open and ev.get("type") == "result":
@@ -382,8 +393,8 @@ class Agent:
 
     def stop(self):
         self.stopping = True
-        if self.proc and self.proc.poll() is None:
-            self.proc.terminate()
+        if self.proc:
+            compat.stop_process(self.proc)
 
 
 def result_text(content):
@@ -395,7 +406,7 @@ def result_text(content):
 
 def unwrap_shell(command):
     """Codex reports commands wrapped in a login shell. What it ran is the inside."""
-    m = re.fullmatch(r"""/bin/z?sh -l?c (['"]?)(.*)\1""", command, re.S)
+    m = re.fullmatch(r"""(?:/bin/z?sh -l?c|\S*(?:powershell|pwsh)(?:\.exe)?"? (?:-NoProfile )?-Command) (['"]?)(.*)\1""", command, re.S | re.I)
     return m.group(2) if m else command
 
 

@@ -1,6 +1,6 @@
 ---
 name: carnot-voice
-description: Install, start, configure and troubleshoot Carnot, a macOS desktop assistant with a floating character, voice wake word ("Carnot", 卡诺), typed input, subtitles and a VS Code extension. It runs Claude, ChatGPT, Gemini, ZCode, DeepSeek or Doubao, sharing one memory and one set of skills across the app, the extension and every AI. Use when the user wants to deploy, run, tune or debug Carnot / 语音助手 / 卡诺 / wake word / 回声消除 / shared memory, or asks why it doesn't wake, mishears, or won't connect.
+description: Install, start, configure and troubleshoot Carnot, a macOS and Windows desktop assistant with a floating character, voice wake word ("Carnot", 卡诺), typed input, subtitles and a VS Code extension. It runs Claude, ChatGPT, Gemini, ZCode, DeepSeek or Doubao, sharing one memory and one set of skills across the app, the extension and every AI. Use when the user wants to deploy, run, tune or debug Carnot / 语音助手 / 卡诺 / wake word / 回声消除 / shared memory, or asks why it doesn't wake, mishears, or won't connect.
 ---
 
 # Carnot
@@ -11,6 +11,7 @@ server/        voice service and AI runner (Python)
   voice_server.py   audio loop: echo cancel -> wake word -> VAD -> ASR -> commands, voice switch
   aec.py            Speex echo cancellation, aligned on hardware timestamps
   syscap/main.swift ScreenCaptureKit helper: what the Mac plays, the echo reference
+  compat.py         everything that differs between macOS and Windows
   agent_core.py     one turn through any AI's CLI; used by the app and the extension
   carnot_agent.py   command line front of agent_core, used by the extension
   attachments.py    readable versions of attachments an AI can't read (HEIC, video frames, xlsx, doc, pdf, mat, GBK text), in ~/.carnot/converted
@@ -23,7 +24,10 @@ server/        voice service and AI runner (Python)
   config.toml       settings
 app/           Carnot.app: floating window (main.swift), page (index.html, settings.html), layers (art/)
 vscode/        the extension
+windows/       Windows only: Tauri app (app/), WASAPI helper for system audio and mic (audio/), installer (build.ps1, hooks.nsh, postinstall.ps1)
 ```
+
+On Windows, the installer is `dist/Carnot-Setup.exe`, built by `windows/build.ps1`. The service is at `%LOCALAPPDATA%/Carnot/server`, its Python at `.venv/python.exe`. Settings are in `~/.carnot/config.toml`, the log in `~/.carnot/logs/carnot.log`, keys in Windows Credential Manager. Instructions below that name brew, Xcode, `.app` or `~/Library` are for the Mac.
 
 Needs macOS 13+, Xcode command line tools and Homebrew. The installer adds the rest.
 

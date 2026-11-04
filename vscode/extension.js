@@ -43,6 +43,12 @@ function clipboardFiles() {
       if (url.js) out.push($.NSURL.URLWithString(url).filePathURL.path.js);
     }
     JSON.stringify(out)`;
+  if (process.platform === "win32") {
+    const script = "[Console]::OutputEncoding=[Text.Encoding]::UTF8;ConvertTo-Json @(Get-Clipboard -Format FileDropList | ForEach-Object { $_.FullName })";
+    return new Promise(resolve => cp.execFile("powershell", ["-NoProfile", "-NonInteractive", "-Command", script], { timeout: 5000, windowsHide: true }, (err, stdout) => {
+      try { resolve(err ? [] : [].concat(JSON.parse(stdout)).filter(p => p && fs.existsSync(p))); } catch { resolve([]); }
+    }));
+  }
   return new Promise(resolve => cp.execFile("/usr/bin/osascript", ["-l", "JavaScript", "-e", script], { timeout: 5000 }, (err, stdout) => {
     try { resolve(err ? [] : JSON.parse(stdout).filter(p => fs.existsSync(p))); } catch { resolve([]); }
   }));
@@ -55,13 +61,21 @@ function closePreviews() {
   if (stale.length) vscode.window.tabGroups.close(stale, true);
 }
 
+/** Ends a run. Windows has no SIGTERM: killing the process would leave the CLI it started running. */
+function stopChild(child) {
+  if (process.platform !== "win32") return child.kill("SIGTERM");
+  if (child.stdin.writable) child.stdin.write(JSON.stringify({ type: "stop" }) + "\n");
+  else cp.execFile("taskkill", ["/T", "/F", "/PID", String(child.pid)], { windowsHide: true }, () => {});
+}
+
 /** Runs carnot_agent.py, calling onEvent for each JSON line. Resolves with the exit code. */
 function agent(args, { input = "", keepOpen = false, onEvent = () => {}, onSpawn = () => {} } = {}) {
   return new Promise((resolve, reject) => {
     const dir = serverDir();
-    const python = path.join(dir, ".venv", "bin", "python");
-    if (!dir || !fs.existsSync(python)) return reject(new Error("找不到 Carnot 的服务目录，请在设置里填写 carnot.serverDir"));
-    const child = cp.spawn(python, [path.join(dir, "carnot_agent.py"), ...args], { cwd: dir, env: process.env });
+    const python = [path.join(dir, ".venv", "bin", "python"), path.join(dir, ".venv", "Scripts", "python.exe"), path.join(dir, ".venv", "python.exe")]
+      .find(p => fs.existsSync(p)) || "";
+    if (!dir || !python) return reject(new Error("找不到 Carnot 的服务目录，请在设置里填写 carnot.serverDir"));
+    const child = cp.spawn(python, [path.join(dir, "carnot_agent.py"), ...args], { cwd: dir, env: { ...process.env, PYTHONUTF8: "1" }, windowsHide: true });
     onSpawn(child);
     let buf = "", err = "";
     child.stdout.setEncoding("utf8");  // a character can fall across two chunks
@@ -143,7 +157,7 @@ class Chat {
     if (m.type === "newChat") return this.newChat();
     if (m.type === "history") return this.history();
     if (m.type === "send") return this.send(m.text, m.paths || [], m.skill, m.withFile);
-    if (m.type === "stop") { if (this.child) this.child.kill("SIGTERM"); return; }
+    if (m.type === "stop") { if (this.child) stopChild(this.child); return; }
     if (m.type === "provider") { this.provider = m.id; await this.context.globalState.update("provider", m.id); return this.refresh(); }
     if (m.type === "permission") return this.setPermission(m.mode);
     if (m.type === "setModel") return this.showModels(await agentResult(["model-set", m.provider, m.model || "", m.effort || ""]));
@@ -334,7 +348,7 @@ class Chat {
   }
 
   newChat() {
-    if (this.child) this.child.kill("SIGTERM");
+    if (this.child) stopChild(this.child);
     this.conv = null;
     this.messages = [];
     return this.showConversation();
@@ -537,7 +551,7 @@ class Chat {
   }
 
   async setKey(p) {
-    const key = await vscode.window.showInputBox({ password: true, prompt: `${p.name} 的 API Key，只保存在这台 Mac 的钥匙串里`, ignoreFocusOut: true });
+    const key = await vscode.window.showInputBox({ password: true, prompt: `${p.name} 的 API Key，只保存在这台电脑的系统凭据库里`, ignoreFocusOut: true });
     if (key) { await agentResult(["set-key", p.id], key); await this.refresh(); }
   }
 }
@@ -566,7 +580,7 @@ function activate(context) {
     panel.onDidDispose(() => {
       tabs.delete(tab);
       tab.host = null;
-      if (tab.child) tab.child.kill("SIGTERM");
+      if (tab.child) stopChild(tab.child);
     });
     return tab;
   };

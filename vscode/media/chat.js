@@ -123,7 +123,7 @@ function drawTool(card, p) {
   const tt = toolTitle(p);
   const isPath = PATH_TOOLS.includes(p.name) && (p.input || {}).file_path;
   const title = document.createElement("span"); title.className = "ttitle"; title.title = tt;
-  title.textContent = isPath ? tt.split("/").filter(Boolean).slice(-3).join("/") : tt;
+  title.textContent = isPath ? tt.split(/[\\/]/).filter(Boolean).slice(-3).join("/") : tt;
   head.append(dot, name, title);
   const i = p.input || {};
   if (PATH_TOOLS.includes(p.name) && i.file_path) {
@@ -173,7 +173,7 @@ function nameOf(id) { return (providers.find(p => p.id === id) || {}).name || id
 
 function addUser(m) {
   const d = document.createElement("div"); d.className = "msg user";
-  const tags = [...(m.skill ? [`skill：${m.skill}`] : []), ...(m.paths || []).map(p => "📎 " + p.split("/").filter(Boolean).pop())];
+  const tags = [...(m.skill ? [`skill：${m.skill}`] : []), ...(m.paths || []).map(p => "📎 " + p.split(/[\\/]/).filter(Boolean).pop())];
   d.innerHTML = tags.map(t => `<span class="tag">${esc(t)}</span>`).join("") + `<div>${esc(m.text).replace(/\n/g, "<br>")}</div>`;
   const back = document.createElement("button"); back.className = "rewind"; back.textContent = "回退到这里"; back.title = "把代码和对话退回这条消息之前";
   const ordinal = userCount++;
@@ -475,7 +475,7 @@ function drawChips() {
     c.title = "点击切换是否附带当前文件";
     c.onclick = () => { withFile = !withFile; drawChips(); };
   }
-  paths.forEach(p => chip("📎 " + p.split("/").filter(Boolean).pop(), () => { paths = paths.filter(q => q !== p); drawChips(); }));
+  paths.forEach(p => chip("📎 " + p.split(/[\\/]/).filter(Boolean).pop(), () => { paths = paths.filter(q => q !== p); drawChips(); }));
 }
 
 // A model can think for minutes without sending anything: say so, rather than look frozen.

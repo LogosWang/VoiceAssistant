@@ -3,7 +3,7 @@
 <style>
 :root{--line:#2a2024;--skin:#f4d6c2;--skin-sh:#c98f7c;--hair:#b9b1a8;--hair-lit:#e4ded4;--hair-sh:#6f6864;--hat:#1f2233;--hat-lit:#3b4158;--wine:#6e2433;--brass:#c49a52;--brass-sh:#7c5a26;--coat:#23372f;--coat-lit:#3a5548;--ivory:#efe8da;--ivory-sh:#b9ae9c}
 *{box-sizing:border-box}
-html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-family:"Songti SC","PingFang SC",-apple-system,serif;user-select:none;-webkit-user-select:none}
+html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-family:"Songti SC","PingFang SC","SimSun","Microsoft YaHei",-apple-system,serif;user-select:none;-webkit-user-select:none}
 #stage{position:absolute;inset:0}
 #subs{position:fixed;left:4px;right:4px;bottom:48px;z-index:5;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none}
 .bubble{max-width:100%;padding:5px 10px;border-radius:3px;font-size:14px;line-height:1.4;color:#f3ecdd;background:rgba(24,22,28,.9);border:1px solid rgba(196,154,82,.75);outline:1px solid rgba(196,154,82,.28);outline-offset:2px;box-shadow:0 3px 12px rgba(0,0,0,.35);word-break:break-word;transition:opacity .35s,transform .35s;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}
@@ -13,9 +13,9 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-famil
 #reply{font-size:13px;-webkit-line-clamp:3}
 #notice{font-size:12px;background:rgba(110,36,51,.95);-webkit-line-clamp:3}
 #inputbar{position:fixed;left:3px;right:3px;bottom:3px;height:38px;display:flex;align-items:center;gap:4px;padding:4px 5px;background:rgba(24,22,28,.96);border:1px solid rgba(196,154,82,.85);outline:1px solid rgba(196,154,82,.28);outline-offset:2px;border-radius:3px;box-shadow:0 3px 12px rgba(0,0,0,.35)}
-#input{flex:1;min-width:0;background:none;border:0;outline:0;color:#f3ecdd;font:13px/1.4 "Songti SC","PingFang SC",serif;user-select:text;-webkit-user-select:text}
+#input{flex:1;min-width:0;background:none;border:0;outline:0;color:#f3ecdd;font:13px/1.4 "Songti SC","PingFang SC","SimSun","Microsoft YaHei",serif;user-select:text;-webkit-user-select:text}
 #input::placeholder{color:#8f8676}
-#inputbar button{flex:none;height:26px;border:1px solid var(--brass);background:#2c2620;color:#e0bf7c;cursor:pointer;font:12px "Songti SC","PingFang SC",serif}
+#inputbar button{flex:none;height:26px;border:1px solid var(--brass);background:#2c2620;color:#e0bf7c;cursor:pointer;font:12px "Songti SC","PingFang SC","SimSun","Microsoft YaHei",serif}
 #prov{max-width:68px;padding:0 5px;border-radius:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #prov.bad{color:#e8a06a;border-color:#a8505f}
 #attach,#sendbtn,#voice{width:26px;border-radius:50%;padding:0}
@@ -55,7 +55,7 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-famil
 #ring{position:absolute;left:6px;top:0;width:306px;height:410px;border-radius:50%;border:1.5px solid #c49a52;opacity:0;pointer-events:none}
 [data-state=listening] #ring{animation:ring 1.8s ease-out infinite}
 @keyframes ring{from{transform:scale(.92);opacity:.75}to{transform:scale(1.04);opacity:0}}
-#hint{position:absolute;right:52px;top:30px;display:none;color:#efe8da;font:italic 600 22px "Songti SC",serif;text-shadow:0 1px 3px rgba(0,0,0,.7)}
+#hint{position:absolute;right:52px;top:30px;display:none;color:#efe8da;font:italic 600 22px "Songti SC","SimSun",serif;text-shadow:0 1px 3px rgba(0,0,0,.7)}
 [data-state=offline] #hint{display:block}
 #hint span{display:inline-block;animation:float 3.6s ease-out infinite}
 #hint span:nth-child(2){animation-delay:1.2s}
@@ -267,7 +267,7 @@ function drawChips() {
   const box = $("chips"); box.textContent = "";
   attached.forEach(p => {
     const c = document.createElement("div"), name = document.createElement("span"), x = document.createElement("b");
-    c.className = "chip"; c.title = p; name.textContent = "📎 " + p.split("/").filter(Boolean).pop(); x.textContent = "×";
+    c.className = "chip"; c.title = p; name.textContent = "📎 " + p.split(/[\\/]/).filter(Boolean).pop(); x.textContent = "×";
     x.onclick = () => { attached = attached.filter(q => q !== p); drawChips(); };
     c.append(name, x); box.append(c);
   });
