@@ -6,7 +6,7 @@ document.body.insertAdjacentHTML("afterbegin", `<div id="bar"><span id="convTitl
   <div id="history" hidden><input id="historySearch" placeholder="搜索标题"><div id="historyList"></div></div>`);
 bottom.innerHTML = `<div id="menu" hidden></div><div id="chips"></div>
   <textarea id="input" placeholder="给 Carnot 发消息。/ 命令和 skill，@ 引用文件，可粘贴图片。Enter 发送，Shift+Enter 换行"></textarea>
-  <div id="row"><select id="provider" title="使用的 AI"></select><select id="permission" title="AI 的权限，从下一条消息开始生效"><option value="plan">计划模式</option><option value="manual">每次询问</option><option value="acceptEdits">可改文件</option><option value="auto">自动</option><option value="bypassPermissions">完全放行</option></select><button id="attach" class="icon" title="附加文件或文件夹（也可以粘贴图片、输入 @）"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button><span class="sp"></span><span id="usage"></span><button id="send" class="icon main" title="发送"></button></div>`;
+  <div id="row"><button id="attach" class="icon" title="附加文件或文件夹（也可以粘贴图片、输入 @）"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button><div id="pickers"><select id="provider" title="使用的 AI"></select><select id="model" title="模型，从下一条消息开始生效"></select><select id="effort" title="Effort（思考力度），从下一条消息开始生效"></select><select id="permission" title="AI 的权限，从下一条消息开始生效"><option value="plan">计划模式</option><option value="manual">每次询问</option><option value="acceptEdits">可改文件</option><option value="auto">自动</option><option value="bypassPermissions">完全放行</option></select></div><span id="usage"></span><button id="send" class="icon main" title="发送"></button></div>`;
 const ICON_SEND = '<svg viewBox="0 0 16 16"><path d="M8 13V3M3.500 7.500 8 3l4.500 4.500"/></svg>';
 const ICON_STOP = '<svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1" class="solid"/></svg>';
 const $ = id => document.getElementById(id);
@@ -182,9 +182,39 @@ function addUser(m) {
   log.append(d);
 }
 
+// A small beam engine, the same linkage as the app's: the flywheel's angle fixes the crank pin, the rod
+// and the beam's reach fix the beam, and the beam fixes the piston.
+const ENGINE_SVG = `<svg class="engine" viewBox="0 0 92 46" aria-hidden="true"><path class="frame" d="M4 44h84M36 44V13M30 44l6-31 6 31M6 44V28M18 44V28"/><rect class="cyl" x="5" y="26" width="14" height="18" rx="1"/><rect class="pst" x="7" y="27" width="10" height="4"/><path class="prod"/><path class="beam"/><path class="rod"/><g class="wheel"><circle cx="0" cy="0" r="10"/><path d="M-10 0H10M0-10V10"/></g><circle class="pin" r="1.6"/><circle class="pivot" cx="36" cy="12" r="1.8"/></svg>`;
+const ENG = { px: 36, py: 12, reach: 26, cx: 62, cy: 32, crank: 6, rod: 17 };
+function drawEngineAt(svg, theta) {
+  const g = ENG, pinX = g.cx + g.crank * Math.cos(theta), pinY = g.cy + g.crank * Math.sin(theta);
+  const dx = pinX - g.px, dy = pinY - g.py, dist = Math.hypot(dx, dy);
+  const along = (g.reach * g.reach - g.rod * g.rod + dist * dist) / (2 * dist);
+  const up = Math.sqrt(Math.max(0, g.reach * g.reach - along * along));
+  const endX = g.px + (along * dx + up * dy) / dist, endY = g.py + (along * dy - up * dx) / dist;   // the upper meeting point
+  const leftX = 2 * g.px - endX, leftY = 2 * g.py - endY;
+  const pistonY = 35 + (leftY - 12) * 0.9;
+  const at = s => svg.querySelector(s);
+  at(".beam").setAttribute("d", `M${leftX} ${leftY}L${endX} ${endY}`);
+  at(".rod").setAttribute("d", `M${endX} ${endY}L${pinX} ${pinY}`);
+  at(".prod").setAttribute("d", `M12 ${pistonY}L${leftX} ${leftY}`);
+  at(".pst").setAttribute("y", pistonY);
+  at(".pin").setAttribute("cx", pinX); at(".pin").setAttribute("cy", pinY);
+  at(".wheel").setAttribute("transform", `translate(${g.cx} ${g.cy}) rotate(${theta * 180 / Math.PI})`);
+}
+let engineTheta = -0.9, engineLast = 0;
+function turnEngine(now) {
+  const svg = live && live.el.querySelector("svg.engine");
+  if (!svg) { engineLast = 0; return; }
+  if (engineLast) engineTheta += (now - engineLast) / 1700 * 2 * Math.PI;   // one turn in 1.7 s, as in the app
+  engineLast = now;
+  drawEngineAt(svg, engineTheta);
+  requestAnimationFrame(turnEngine);
+}
+
 function addReply(provider) {
   const d = document.createElement("div"); d.className = "msg";
-  d.innerHTML = `<div class="who">${esc(nameOf(provider))}</div><div class="parts"></div><div class="dots">…</div>`;
+  d.innerHTML = `<div class="who">${esc(nameOf(provider))}</div><div class="parts"></div><div class="dots">${ENGINE_SVG}<span class="dtext">…</span></div>`;
   log.append(d);
   return { el: d, box: d.querySelector(".parts"), parts: [], text: "", cards: {} };
 }
@@ -335,34 +365,43 @@ $("usage").onclick = () => { if (!busy) { input.value = "/context"; send(); } };
 
 function nearBottom() { return log.scrollHeight - log.scrollTop - log.clientHeight < 80; }
 let follow = true;
-log.addEventListener("scroll", () => { follow = nearBottom(); });
-const scroll = () => { if (follow) log.scrollTop = log.scrollHeight; };
+const jump = document.createElement("button");
+jump.id = "jump"; jump.hidden = true; jump.textContent = "↓ 下面有新内容";
+jump.onclick = () => { follow = true; scroll(); };
+bottom.append(jump);
+log.addEventListener("scroll", () => { follow = nearBottom(); if (follow) jump.hidden = true; });
+const scroll = () => { if (follow) { log.scrollTop = log.scrollHeight; jump.hidden = true; } else jump.hidden = false; };
 
 function drawEmpty() {
   if (log.children.length) return;
   log.innerHTML = `<div class="empty">和 Carnot App 共用同一套记忆和 skill。<br>输入 / 选择命令或 skill，@ 引用文件，右上角可连接其他 AI。</div>`;
 }
 
-function drawHistory(messages) {
+/** Returns the last reply, still open, when `running`: the page was reloaded in the middle of a turn. */
+function drawHistory(messages, running) {
   log.textContent = "";
   follow = true;
   userCount = 0;
   drawUsage([...messages].reverse().find(m => m.usage)?.usage);
-  for (const m of messages) {
+  let open = null;
+  for (const [at, m] of messages.entries()) {
     if (m.role === "user") { addUser(m); continue; }
     const r = addReply(m.provider);
-    r.el.querySelector(".dots").remove();
+    if (running && at === messages.length - 1) open = r;
+    else r.el.querySelector(".dots").remove();
     const parts = m.parts || [...(m.tools || []).map(t => ({ type: "tool", id: t.name, name: t.name, input: t.detail ? { description: t.detail } : {}, done: true })), { type: "text", text: m.text || "" }];
     for (const p of parts) {
       if (p.type === "text") addText(r, p.text);
       else if (p.type === "thinking") addThinking(r, p.text);
       else addTool(r, p);
     }
+    if (r === open) continue;
     settleTools(r);
     addChanges(r, m.checkpoint);
     if (m.error) addError(r, m.error);
   }
   drawEmpty(); scroll();
+  return open;
 }
 
 function drawConv(conv) {
@@ -402,6 +441,22 @@ $("historyBtn").onclick = () => {
 };
 $("newBtn").onclick = () => { $("history").hidden = true; log.hidden = false; vs.postMessage({ type: "newChat" }); };
 
+const EFFORT_NAMES = { low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高" };
+let models = {};
+function drawModels() {
+  const c = models[current];
+  $("model").hidden = !c;
+  $("effort").hidden = !c || !c.efforts.length;
+  if (!c) return;
+  $("model").innerHTML = c.models.map(m => `<option value="${esc(m.id)}" title="${esc(m.note || "")}">${esc(m.name)}</option>`).join("");
+  $("model").value = c.selected;
+  $("effort").innerHTML = c.efforts.map(e => `<option value="${esc(e)}">Effort ${EFFORT_NAMES[e] || esc(e)}${c.mapped[e] ? `（按${EFFORT_NAMES[c.mapped[e]]}）` : ""}</option>`).join("");
+  $("effort").value = c.shown_effort || "";
+}
+// a new model starts from its own default effort, unless one was picked on purpose
+const pickModel = () => vs.postMessage({ type: "setModel", provider: current, model: $("model").value, effort: models[current].effort || "" });
+const pickEffort = () => vs.postMessage({ type: "setModel", provider: current, model: $("model").value, effort: $("effort").value });
+
 function drawProviders() {
   $("provider").innerHTML = providers.map(p => `<option value="${esc(p.id)}"${p.id === current ? " selected" : ""}>${esc(p.name)}${p.ready ? "" : "（未连接）"}</option>`).join("");
 }
@@ -432,7 +487,7 @@ function heard(m) {
   retry = m.type === "step" && m.step.kind === "retry" ? `连接不上模型${m.step.status ? `（${m.step.status}）` : ""}，第 ${m.step.attempt}${m.step.max ? "/" + m.step.max : ""} 次重试` : "";
 }
 function drawWaiting() {
-  const el = live && live.el.querySelector(".dots");
+  const el = live && live.el.querySelector(".dtext");
   if (!el) return;
   const now = Date.now(), silent = now - lastHeard, total = clock(now - turnStart);
   let text = `工作中 ${total}`;
@@ -560,7 +615,9 @@ bottom.addEventListener("drop", e => {
 });
 $("send").onclick = send;
 $("attach").onclick = () => vs.postMessage({ type: "attach" });
-$("provider").onchange = e => { current = e.target.value; vs.postMessage({ type: "provider", id: current }); };
+$("provider").onchange = e => { current = e.target.value; drawModels(); vs.postMessage({ type: "provider", id: current }); };
+$("model").onchange = pickModel;
+$("effort").onchange = pickEffort;
 $("permission").onchange = e => vs.postMessage({ type: "permission", mode: e.target.value });
 
 // every copy button: code blocks and tool input/output
@@ -575,18 +632,20 @@ document.addEventListener("click", e => {
 window.addEventListener("message", ({ data: m }) => {
   heard(m);
   if (m.type === "state") {
-    providers = m.providers; current = m.provider; skills = m.skills; commands = m.commands || []; file = m.file; drawProviders(); drawChips();
+    providers = m.providers; current = m.provider; skills = m.skills; commands = m.commands || []; file = m.file; models = m.models || {}; drawProviders(); drawModels(); drawChips();
     $("permission").value = m.permission;
     drawConv(m.conv);
-    if (!busy) drawHistory(m.messages);
+    if (!busy || (m.busy && !live)) { live = drawHistory(m.messages, m.busy); if (live) requestAnimationFrame(turnEngine); }
     setBusy(m.busy);
+  } else if (m.type === "models") {
+    models = m.items; drawModels();
   } else if (m.type === "historyList") {
     historyItems = m.items; openId = m.open; $("history").hidden = false; log.hidden = true; drawHistory_(); $("historySearch").focus();
   } else if (m.type === "user") {
     log.querySelector(".empty")?.remove(); addUser(m); scroll();
   } else if (m.type === "busy") {
     setBusy(m.on);
-    if (m.on) { live = addReply(m.provider); scroll(); }
+    if (m.on) { live = addReply(m.provider); scroll(); requestAnimationFrame(turnEngine); }
     else { dropPending(); if (live) { settleTools(live); live.el.querySelector(".dots")?.remove(); live = null; } }
   } else if (m.type === "delta") {
     if (live) addText(live, m.text);

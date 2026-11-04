@@ -15,6 +15,9 @@ h1{font-size:19px;font-weight:600;margin:0 0 3px}
 .sp{flex:1}
 .note{color:var(--dim);font-size:12px;margin:5px 0 7px}
 .acts{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.modelline{margin-bottom:7px}
+.modelline .mlabel{color:var(--dim);font-size:12px}
+.modelline select{background:#100f13;color:var(--ink);border:1px solid #57503f;border-radius:2px;padding:3px 4px;font:13px "Songti SC","PingFang SC",serif;max-width:220px}
 input{flex:1;min-width:150px;background:#100f13;color:var(--ink);border:1px solid #57503f;border-radius:2px;padding:5px 8px;font:13px ui-monospace,Menlo,monospace;outline:0}
 input:focus{border-color:var(--brass)}
 button{background:#2c2620;color:#e8cf9b;border:1px solid var(--brass);border-radius:2px;padding:4px 10px;font:13px "Songti SC","PingFang SC",serif;cursor:pointer}
@@ -105,7 +108,7 @@ const NOTE = {
   claude: "可登录 Claude 订阅或填 API Key。登录与终端里的 Claude Code 共用，退出后两边都要重新登录。",
   chatgpt: "通过 Codex 命令行，可登录 ChatGPT 订阅或填 OpenAI API Key。",
   gemini: "通过 Gemini 命令行，登录在弹出的终端里完成。免费和 Google One 账号已被官方转到 Antigravity CLI，这类账号请用 API Key。",
-  zcode: "填 GLM Coding Plan 的 API Key（ZCode 桌面版用的同一套餐），通过 Claude Code 运行。",
+  zcode: "填 GLM 的 API Key，国内智谱和海外 Z.ai 的按量 API 或 Coding Plan 都可以，保存时自动选能用的线路。通过 Claude Code 运行。",
   deepseek: "填 DeepSeek 的 API Key，通过 Claude Code 运行。",
   doubao: "填火山方舟 Coding Plan 的 API Key，通过 Claude Code 运行。",
 };
@@ -123,11 +126,14 @@ function build(p) {
   const r = document.createElement("div"); r.className = "row";
   r.innerHTML = `<div class="top"><span class="name"></span><span class="st"></span><span class="sp"></span><button class="use">使用</button></div>
     <div class="note"></div>
+    <div class="acts modelline"><span class="mlabel">模型</span><select class="mdl" title="从下一条指令开始生效"></select><span class="mlabel eflabel">Effort</span><select class="eff" title="思考力度，从下一条指令开始生效"></select></div>
     <div class="acts sub-acts"><button class="login"></button><button class="logout quiet">退出登录</button><button class="install">安装</button></div>
     <div class="acts" style="margin-top:6px"><input type="password" placeholder="粘贴 API Key" autocomplete="off" spellcheck="false"><button class="save">保存</button><button class="del quiet">删除 Key</button><button class="get quiet">获取 Key</button></div>`;
   const $ = s => r.querySelector(s);
   $(".name").textContent = p.name; $(".note").textContent = NOTE[p.id];
   $(".use").onclick = () => server({type: "use", provider: p.id});
+  $(".mdl").onchange = () => server({type: "model_set", provider: p.id, model: $(".mdl").value, effort: (models?.[p.id] || {}).effort || ""});
+  $(".eff").onchange = () => server({type: "model_set", provider: p.id, model: $(".mdl").value, effort: $(".eff").value});
   $(".login").onclick = () => { msg.textContent = "正在打开登录…"; server({type: "login", provider: p.id}); };
   $(".logout").onclick = () => server({type: "logout", provider: p.id});
   $(".install").onclick = () => server({type: "install", provider: p.id});
@@ -135,6 +141,22 @@ function build(p) {
   $(".del").onclick = () => server({type: "del_key", provider: p.id});
   $(".get").onclick = () => link(p.key_url);
   list.appendChild(r); rows[p.id] = r; return r;
+}
+const EFFORTS = {low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高"};
+let models = null;
+function drawModels() {
+  if (!models) return;
+  for (const [id, c] of Object.entries(models)) {
+    const r = rows[id]; if (!r) continue;
+    const mdl = r.querySelector(".mdl"), eff = r.querySelector(".eff");
+    mdl.textContent = "";
+    for (const m of c.models) { const o = new Option(m.name, m.id); o.title = m.note || ""; mdl.add(o); }
+    mdl.value = c.selected;
+    eff.textContent = "";
+    for (const e of c.efforts) eff.add(new Option((EFFORTS[e] || e) + (c.mapped[e] ? `（按${EFFORTS[c.mapped[e]]}）` : ""), e));
+    eff.value = c.shown_effort || "";
+    eff.style.display = r.querySelector(".eflabel").style.display = c.efforts.length ? "" : "none";
+  }
 }
 let permission = null;
 function drawModes() {
@@ -156,11 +178,13 @@ document.getElementById("permYes").onclick = () => { document.getElementById("pe
 document.getElementById("permNo").onclick = () => document.getElementById("permConfirm").classList.remove("on");
 window.carnot = ev => {
   if (ev.type === "notice") { msg.textContent = ev.text; return; }
+  if (ev.type === "models") { models = ev.items; drawModels(); return; }
   if (ev.type !== "providers") return;
   if (ev.permission) { permission = ev.permission; drawModes(); }
   for (const p of ev.items) {
     const r = rows[p.id] || build(p), $ = s => r.querySelector(s);
     r.classList.toggle("cur", ev.current === p.id);
+    $(".note").textContent = NOTE[p.id] + (p.endpoint ? ` 当前线路：${p.endpoint}。` : "");
     const st = $(".st");
     st.textContent = !p.installed ? `需要先安装 ${p.needs}` : p.has_key ? "已连接（API Key）" : p.signed_in ? "已连接（订阅登录）" : "未连接";
     st.classList.toggle("ok", p.ready);
@@ -173,11 +197,12 @@ window.carnot = ev => {
     $(".del").style.display = p.has_key ? "" : "none";
     if (p.signed_in !== undefined && msg.textContent === "正在打开登录…" && p.signed_in) msg.textContent = "";
   }
+  drawModels();
 };
 // ---------- remote bots ----------
 const BOT_HELP = {
   telegram: "在 Telegram 里找 @BotFather，发送 /newbot，把它给的 Token 贴到这里。Token 只保存在钥匙串里。",
-  feishu: "在飞书开放平台创建企业自建应用并启用机器人，开通发消息、读取和下载消息资源、上传图片和文件的权限，事件订阅选“使用长连接”，添加“接收消息”事件，再发布应用。App Secret 只保存在钥匙串里。",
+  feishu: "在飞书开放平台创建企业自建应用并启用机器人，开通发消息、读取和下载消息资源、上传图片和文件（im:resource）的权限，事件订阅选“使用长连接”，添加“接收消息”事件，再发布应用。App Secret 只保存在钥匙串里。",
 };
 const $b = id => document.getElementById(id);
 function botKind() {

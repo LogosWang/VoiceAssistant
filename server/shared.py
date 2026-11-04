@@ -5,6 +5,8 @@ runs, on every turn, so a fact saved from VS Code under one model is there in th
 Skills stay where they are, in ~/.claude/skills and ~/.agents/skills (read by Codex and Gemini); each
 side gets a symlink to what the other has. Nothing existing is moved or overwritten.
 """
+import atexit
+import contextlib
 import os
 import re
 import shutil
@@ -192,3 +194,30 @@ def skill_note(name):
         if s["name"] == name:
             return f"[请按这个 skill 的说明完成任务：{name}，说明文件：{s['path']}，先读取它]"
     return ""
+
+
+# ---------- turns running in other processes, so the app's engine turns for them too ----------
+TURNS_DIR = os.path.join(HOME, "turns")
+
+
+def turn_started():
+    os.makedirs(TURNS_DIR, exist_ok=True)
+    path = os.path.join(TURNS_DIR, str(os.getpid()))
+    open(path, "w").close()
+    atexit.register(lambda: os.path.exists(path) and os.remove(path))
+
+
+def turns_running():
+    """Whether any is alive. One that crashed leaves its file behind, which is cleared here."""
+    running = False
+    with contextlib.suppress(OSError):
+        for name in os.listdir(TURNS_DIR):
+            try:
+                os.kill(int(name), 0)
+                running = True
+            except ProcessLookupError:
+                with contextlib.suppress(OSError):
+                    os.remove(os.path.join(TURNS_DIR, name))
+            except (ValueError, PermissionError):
+                pass
+    return running

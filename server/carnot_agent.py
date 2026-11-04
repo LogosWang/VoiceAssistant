@@ -21,10 +21,11 @@ import signal
 import subprocess
 import sys
 import threading
-import tomllib
 
 import agent_core
 import checkpoints
+import cli_install
+import model_choice
 import providers
 import schedules
 import sessions
@@ -43,16 +44,9 @@ def out(**ev):
     sys.stdout.flush()
 
 
-def configured_model():
-    try:
-        with open(os.path.join(HERE, "config.toml"), "rb") as f:
-            return tomllib.load(f)["claude"].get("model")
-    except (OSError, KeyError, tomllib.TOMLDecodeError):
-        return None
-
-
 def run(args):
     sid, pid = args.conversation, args.provider
+    shared.turn_started()
     answers = queue.SimpleQueue()  # put() is safe from the signal handler
     said = []
     def on_text(t):
@@ -78,7 +72,7 @@ def run(args):
         answers.put(None)
     threading.Thread(target=read_answers, daemon=True).start()
     agent = agent_core.Agent(
-        pid, args.cwd, args.permission, system=SYSTEM, model=configured_model(), session=sessions.native(sid, pid),
+        pid, args.cwd, args.permission, system=SYSTEM, session=sessions.native(sid, pid),
         on_text=on_text, on_session=lambda s: sessions.set_native(sid, pid, s), on_step=on_step, on_permission=on_permission)
     def stop(*_):
         agent.stop()
@@ -189,6 +183,11 @@ def main():
     rn = sub.add_parser("session-rename")
     rn.add_argument("id")
     rn.add_argument("title")
+    sub.add_parser("models").add_argument("--refresh", action="store_true")
+    ms = sub.add_parser("model-set")
+    ms.add_argument("provider", choices=list(providers.PROVIDERS))
+    ms.add_argument("model", nargs="?", default="")
+    ms.add_argument("effort", nargs="?", default="")
     for name in ("login", "logout", "set-key", "del-key", "install"):
         sub.add_parser(name).add_argument("provider", choices=list(providers.PROVIDERS))
     args = ap.parse_args()
@@ -223,18 +222,27 @@ def main():
         out(type="ok", imported=sessions.import_chats(json.load(sys.stdin)))
     elif args.action == "skills":
         out(type="skills", items=shared.list_skills())
+    elif args.action == "models":
+        if args.refresh:
+            model_choice.refresh_stale()
+        out(type="models", items=model_choice.listing())
+    elif args.action == "model-set":
+        model_choice.set_choice(args.provider, args.model, args.effort)
+        out(type="models", items=model_choice.listing())
     elif args.action == "seed":
         out(type="memory", dir=shared.MEMORY_DIR)
     elif args.action == "set-key":
         providers.set_key(args.provider, sys.stdin.read())
+        if providers.PROVIDERS[args.provider].get("endpoints"):
+            providers.detect_endpoint(args.provider)
+        model_choice.refresh(args.provider)
         out(type="ok")
     elif args.action == "del-key":
         providers.del_key(args.provider)
         out(type="ok")
     elif args.action == "install":
-        rc = subprocess.run(["npm", "install", "-g", providers.PROVIDERS[args.provider]["package"]],
-                            capture_output=True).returncode
-        out(type="ok" if rc == 0 else "failed", rc=rc)
+        ok, detail = cli_install.install(args.provider)
+        out(type="ok" if ok else "failed", rc=0 if ok else 1, detail=detail)
     elif args.action == "login":
         cmd = providers.login_command(args.provider)
         if not cmd:

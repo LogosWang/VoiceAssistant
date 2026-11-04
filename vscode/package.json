@@ -2,7 +2,7 @@
   "name": "carnot",
   "displayName": "Carnot",
   "description": "Chat with Claude, ChatGPT, Gemini, ZCode, DeepSeek or Doubao in VS Code, with one memory and one set of skills shared with the Carnot app.",
-  "version": "0.2.4",
+  "version": "0.2.8",
   "publisher": "carnot-local",
   "engines": { "vscode": "^1.90.0" },
   "categories": ["AI", "Chat"],

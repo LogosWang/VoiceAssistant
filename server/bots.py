@@ -289,7 +289,7 @@ class Bot:
         mode = self.cfg.get("permission", "auto")
         self.agent = agent_core.Agent(
             pid, self.manager.workdir, mode if mode in PERMISSIONS else "auto",
-            system=SYSTEM.format(name=self.kind_name), model=self.manager.model, add_dirs=self.manager.add_dirs,
+            system=SYSTEM.format(name=self.kind_name), add_dirs=self.manager.add_dirs,
             session=sessions.native(sid, pid), on_text=parts.append, on_log=self.manager.log,
             on_session=lambda s: sessions.set_native(sid, pid, s))
         agent = self.agent
@@ -352,6 +352,10 @@ class Bot:
         try:
             self.send_file(chat, real, as_image, name)
             self.manager.log(f"[bot {self.cfg['name']}] sent a file, {size} bytes")
+        except FeishuRefused as e:
+            self.manager.log(f"[bot {self.cfg['name']}] couldn't send a file: {e}")
+            self.send(chat, f"{name} 发送失败：飞书应用还没开通权限 {e.scopes}，请在飞书开放平台开通并发布新版本。" if e.scopes
+                      else f"{name} 发送失败，飞书返回错误 {e.code}。")
         except Exception as e:  # the type only: messages can hold URLs with the token
             self.manager.log(f"[bot {self.cfg['name']}] couldn't send a file: {type(e).__name__}")
             self.send(chat, f"{name} 发送失败，详情在电脑的日志里。")
@@ -467,6 +471,15 @@ class TelegramBot(Bot):
             pass
 
 
+class FeishuRefused(Exception):
+    """What Feishu said about a file. Its messages carry no key, unlike a failed request's URL."""
+    def __init__(self, response):
+        self.code = response.code
+        scopes = re.search(r"\[([\w:.,\s-]+)\]", response.msg or "")
+        self.scopes = scopes.group(1) if response.code == 99991672 and scopes else ""
+        super().__init__(f"code {response.code}" + (f", needs permission: {self.scopes}" if self.scopes else ""))
+
+
 class FeishuBot(Bot):
     """Feishu's long connection, so no public address is needed. Only self-built enterprise apps have
     it. The connection can't be closed once open, so stopping only ignores messages until a restart."""
@@ -488,7 +501,8 @@ class FeishuBot(Bot):
         asyncio.set_event_loop(ws_module.loop)
         self.api = self._client()
         self.seen = {}
-        handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(self._event).build()
+        handler = lark.EventDispatcherHandler.builder("", "").register_p2_im_message_receive_v1(self._event) \
+            .register_p2_im_message_message_read_v1(lambda _: None).build()  # sent if subscribed, and it's nothing to us
         client = lark.ws.Client(self.cfg["app_id"], providers.get_key(_key_name(self.cfg["id"], "secret")),
                                 event_handler=handler, domain=lark.FEISHU_DOMAIN, log_level=lark.LogLevel.ERROR)
         self.set_status("已启动，发条消息确认连接")
@@ -565,11 +579,11 @@ class FeishuBot(Bot):
                 body = CreateFileRequestBody.builder().file_type("stream").file_name(name).file(f).build()
                 up = self.api.im.v1.file.create(CreateFileRequest.builder().request_body(body).build())
         if not up.success():
-            raise RuntimeError(f"feishu refused an upload: {up.code}")
+            raise FeishuRefused(up)
         r = self._post(chat, "image", {"image_key": up.data.image_key}) if as_image \
             else self._post(chat, "file", {"file_key": up.data.file_key})
         if not r.success():
-            raise RuntimeError(f"feishu refused a file message: {r.code}")
+            raise FeishuRefused(r)
 
 
 KINDS = {"telegram": TelegramBot, "feishu": FeishuBot}
@@ -579,7 +593,6 @@ class Manager:
     def __init__(self, claude_cfg, transcriber, log, on_busy, on_sessions):
         self.store = Store()
         self.workdir = os.path.expanduser(claude_cfg["workdir"])
-        self.model = claude_cfg.get("model")
         self.add_dirs = claude_cfg.get("add_dirs", [])
         self.transcriber = transcriber
         self.log = log

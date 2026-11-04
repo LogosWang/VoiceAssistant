@@ -9,9 +9,9 @@ import AppKit
 import ServiceManagement
 import WebKit
 
-let winSize = NSSize(width: 312, height: 322)
-let charRect = NSRect(x: 57, y: 52, width: 198, height: 258)   // the parts that take the mouse: the character,
-let barRect = NSRect(x: 0, y: 0, width: 312, height: 52)       // and the input box under it
+let winSize = NSSize(width: 250, height: 266)
+let charRect = NSRect(x: 45, y: 46, width: 160, height: 208)   // the parts that take the mouse: the character,
+let barRect = NSRect(x: 0, y: 0, width: 250, height: 46)       // and the input box under it
 let chipsHeight: CGFloat = 26                                  // attachments sit just above the box, if any
 let defaultArgs = ["--mic"]
 let logURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Carnot/carnot.log")
@@ -391,6 +391,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
             handle.passBelow = chipsShown ? chipsHeight : 0
         case "settings": openSettings()
         case "schedules": openSchedules()
+        case "menu": showPickMenu(body["items"] as? [[String: Any]] ?? [])
         case "open":
             if let s = body["url"] as? String, let u = URL(string: s), u.scheme == "https" { NSWorkspace.shared.open(u) }
         case "server":
@@ -526,6 +527,28 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
             _ = server.send(["type": "session_delete", "id": s["id"] ?? ""])
         }
     }
+    /** A menu the page describes: it can't be cut off by the small floating window. */
+    func showPickMenu(_ items: [[String: Any]]) {
+        let m = NSMenu()
+        m.autoenablesItems = false
+        for it in items {
+            if it["separator"] != nil { m.addItem(.separator()); continue }
+            let item = NSMenuItem(title: it["title"] as? String ?? "", action: #selector(pickFromMenu(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = it["payload"] ?? it["action"]
+            item.isEnabled = item.representedObject != nil
+            item.state = it["on"] as? Bool == true ? .on : .off
+            m.addItem(item)
+        }
+        m.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc func pickFromMenu(_ item: NSMenuItem) {
+        if let payload = item.representedObject as? [String: Any] { _ = server.send(payload) }
+        if item.representedObject as? String == "settings" { openSettings() }
+        if item.representedObject as? String == "schedules" { openSchedules() }
+    }
+
     @objc func openSchedules() {
         openSettings()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {

@@ -128,7 +128,7 @@ class ClaudeBridge:
             said.append(t)
             splitter.feed(t)
         self._agent = agent_core.Agent(
-            pid, self.workdir, self.cfg["permission_mode"], system=SYSTEM_PROMPT, model=self.cfg.get("model"),
+            pid, self.workdir, self.cfg["permission_mode"], system=SYSTEM_PROMPT,
             add_dirs=self.cfg.get("add_dirs", []), session=before if self.cfg.get("keep_session", True) else None,
             on_text=on_text, on_flush=splitter.flush, on_log=self.log, on_session=self._save_session)
         status, detail = self._agent.run(sessions.with_handoff(self.conversation, pid, text), dirs)

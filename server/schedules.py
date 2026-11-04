@@ -184,7 +184,6 @@ def request_run(tid):
 class Manager:
     def __init__(self, claude_cfg, log, on_sessions, dry_run=False):
         self.workdir = os.path.expanduser(claude_cfg["workdir"])
-        self.model = claude_cfg.get("model")
         self.add_dirs = claude_cfg.get("add_dirs", [])
         self.log = log
         self.on_sessions = on_sessions
@@ -346,7 +345,7 @@ class Manager:
         sessions.touch(sid, task["prompt"])
         sessions.record(sid, "user", task["prompt"])
         said = []
-        agent = agent_core.Agent(pid, task["workdir"], task["permission"], system=SYSTEM, model=self.model,
+        agent = agent_core.Agent(pid, task["workdir"], task["permission"], system=SYSTEM,
                                  add_dirs=self.add_dirs, on_text=said.append, on_log=self.log, may_schedule=False,
                                  on_session=lambda s: sessions.set_native(sid, pid, s))
         with self.lock:

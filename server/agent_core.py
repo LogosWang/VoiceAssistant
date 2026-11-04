@@ -9,6 +9,7 @@ import tempfile
 import time
 
 import attachments
+import model_choice
 import providers
 import shared
 
@@ -23,7 +24,7 @@ class Agent:
     in the order it happened, for the transcript. on_permission, Claude Code only, answers the
     questions it would otherwise deny: given the request, it returns {"allow": bool, ...}."""
 
-    def __init__(self, provider, workdir, permission, system="", model=None, add_dirs=(), session=None,
+    def __init__(self, provider, workdir, permission, system="", add_dirs=(), session=None,
                  on_text=None, on_flush=None, on_log=None, on_session=None, on_tool=None, on_step=None, on_permission=None, may_schedule=True):
         self.provider = provider
         self.stopping = False
@@ -31,7 +32,6 @@ class Agent:
         self.workdir = workdir
         self.permission = permission
         self.system = system
-        self.model = model
         self.add_dirs = list(add_dirs)
         self.session = session
         self._text_out = on_text or (lambda t: None)
@@ -133,11 +133,16 @@ class Agent:
         # nothing can ask on the other CLIs from here, so "ask each time" means change nothing
         mode = "manual" if asked else "plan" if self.permission == "manual" and self.on_permission else providers.normalize_permission(self.permission)
         sid = self.session
+        model, effort = model_choice.resolve(self.provider)
         cli = shutil.which(p["cli"]) or p["cli"]
         dirs = [shared.MEMORY_DIR] + dirs
         if p["engine"] == "codex":
             cmd = [cli, "exec"] + (["resume", sid] if sid else [])
             cmd += ["--json", "--skip-git-repo-check"]
+            if model:
+                cmd += ["-c", f'model="{model}"']
+            if effort:
+                cmd += ["-c", f'model_reasoning_effort="{effort}"']
             if mode == "bypassPermissions":
                 cmd.append("--dangerously-bypass-approvals-and-sandbox")
             else:  # -c, because a resumed session takes no --sandbox or --add-dir
@@ -149,6 +154,8 @@ class Agent:
             return cmd + ["-"]
         if p["engine"] == "gemini":
             cmd = [cli, "-p", "", "--output-format", "stream-json", "--skip-trust"]
+            if model:
+                cmd += ["-m", model]
             cmd += ["--approval-mode", {"plan": "plan", "bypassPermissions": "yolo"}.get(mode, "auto_edit")]
             cmd += ["--include-directories", ",".join(dirs)]
             return cmd + (["--resume", sid] if sid else [])
@@ -161,9 +168,10 @@ class Agent:
         cmd.append("--disallowedTools=CronCreate,CronDelete,CronList,ScheduleWakeup")
         if self.may_schedule and mode in ("auto", "acceptEdits"):
             cmd.append(f"--allowedTools=Bash({shared.schedules_tool()} schedule-*)")
-        model = p.get("model") or self.model
         if model:
             cmd += ["--model", model]
+        if effort:
+            cmd += ["--effort", effort]
         if self.on_permission:   # keeps stdin open, so questions can be answered during the turn
             cmd += ["--input-format", "stream-json", "--permission-prompt-tool", "stdio"]
         for d in [os.path.expanduser(d) for d in self.add_dirs] + dirs:
@@ -306,6 +314,8 @@ class Agent:
         """Returns (status, detail): ok, auth (refused credentials), missing (no CLI), stopped,
         no_conversation (the session to resume is gone) or failed."""
         p = providers.PROVIDERS[self.provider]
+        if not shutil.which(p["cli"]):
+            providers.fix_path(fresh=True)  # installed since the shell was last asked?
         if not shutil.which(p["cli"]):
             return "missing", p["cli"]
         text, dirs = self._attachments(text, dirs)

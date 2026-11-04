@@ -6,6 +6,7 @@
     python voice_server.py --dry-run    # print transcripts, don't run Claude
 """
 import argparse
+import contextlib
 import glob
 import json
 import os
@@ -25,6 +26,8 @@ import sherpa_onnx
 from pypinyin import lazy_pinyin
 
 import bots
+import cli_install
+import model_choice
 import schedules
 import events
 import providers
@@ -150,6 +153,9 @@ class Assistant:
         self.voice_on = not os.path.exists(VOICE_FILE)
         self.bots = None
         self.schedules = None
+        self.other_turns = False  # VS Code's chats run in their own processes
+        self.spoken_turn = False
+        self.answering = False
         self.drop_recording = False  # typed input arrived: abandon the recording in progress
         self.resting = False  # rest mode: ignore commands until told to wake up
         self.follow_up_due = False   # reply finished: listen once more without the wake word
@@ -220,15 +226,24 @@ class Assistant:
                 s = "L"
             elif self.speaker.busy:
                 s = "S"
-            elif self.bridge.busy or (self.bots and self.bots.active):
+            elif self.bridge.busy or self.other_turns or (self.bots and self.bots.active) \
+                    or (self.schedules and self.schedules.active):
                 s = "B"
             else:
                 s = "I"
+            # the mic reopens after talking to her, not when a chat elsewhere ends
+            if self.speaker.busy or self.bridge.busy:
+                self.spoken_turn = True
+            elif self.spoken_turn and self.recording is None:
+                self.spoken_turn = False
+                if self.cfg["record"]["follow_up"] and not self.skip_follow_up:
+                    self.follow_up_due = True  # picked up by the audio thread in process()
+            answering = self.bridge.busy or self.speaker.busy
+            if answering != self.answering:     # the app's send button stops what it started
+                self.answering = answering
+                events.emit("turn", on=answering)
             if s == self.state:
                 return
-            if s == "I" and self.state in ("S", "B") and self.cfg["record"]["follow_up"] \
-                    and not self.skip_follow_up:
-                self.follow_up_due = True  # picked up by the audio thread in process()
             self.state = s
             events.emit("state", state=STATES[s])
             if self.conn:
@@ -459,8 +474,29 @@ class Assistant:
         events.emit("sessions", **sessions.listing())
 
     def _report_providers(self):
-        threading.Thread(target=lambda: events.emit("providers", permission=self.cfg["claude"]["permission_mode"],
-                                                    **providers.statuses()), daemon=True).start()
+        def report():
+            events.emit("providers", permission=self.cfg["claude"]["permission_mode"], **providers.statuses())
+            events.emit("models", items=model_choice.listing())
+        threading.Thread(target=report, daemon=True).start()
+
+    def _watch_other_turns(self):
+        while True:
+            self.other_turns = shared.turns_running()
+            self.refresh_state()   # also notices a scheduled task, which doesn't report in
+            time.sleep(1)
+
+    def _keep_models_current(self):
+        while True:
+            if model_choice.refresh_stale():
+                log("[models] a vendor's list changed")
+                self._report_providers()
+            time.sleep(1800)
+
+    def _after_key(self, pid):
+        if providers.PROVIDERS[pid].get("endpoints"):
+            providers.detect_endpoint(pid)
+        model_choice.refresh(pid)
+        self._report_providers()
 
     def _read_commands(self):
         """What the app sends on stdin, one JSON object per line. Keys must never reach a log."""
@@ -480,6 +516,13 @@ class Assistant:
             raise ValueError("unknown provider")
         if kind == "providers":
             return  # the status report after every command is the answer
+        if kind == "stop":
+            self.skip_follow_up = True
+            self.bridge.stop()
+            self.speaker.stop()
+            return self.refresh_state()
+        if kind == "model_set":
+            return model_choice.set_choice(pid, m.get("model"), m.get("effort"))
         if kind == "voice":
             self.set_voice(bool(m.get("on")))
             return
@@ -507,6 +550,7 @@ class Assistant:
         elif kind == "set_key":
             providers.set_key(pid, m["key"])
             log(f"[provider] key saved for {pid}")
+            threading.Thread(target=self._after_key, args=(pid,), daemon=True).start()
         elif kind == "del_key":
             providers.del_key(pid)
             log(f"[provider] key removed for {pid}")
@@ -569,19 +613,19 @@ class Assistant:
 
     def _install(self, pid):
         package = providers.PROVIDERS[pid]["package"]
-        if not shutil.which("npm"):
+        if cli_install.needs_node(pid) and not shutil.which("npm"):
             log("[provider] install: npm not found")
-            events.emit("notice", text="安装需要 Node.js，请先从 nodejs.org 安装，然后重启 Carnot", hold=15000)
+            events.emit("notice", text=f"安装需要 Node.js，请先从 {cli_install.node_url()} 安装，然后重启 Carnot", hold=15000)
             return
         if self.installing:  # a second click while it runs
             return
         self.installing = True
         events.emit("notice", text=f"正在安装 {package}…", hold=180000)
-        r = subprocess.run(["npm", "install", "-g", package], capture_output=True, text=True)
+        ok, detail = cli_install.install(pid)
         self.installing = False
         self.voice_on = not os.path.exists(VOICE_FILE)
-        log(f"[provider] install {package}: exit {r.returncode} {r.stderr[-300:]}")
-        events.emit("notice", text="安装完成" if r.returncode == 0 else "安装失败，详情请看日志", hold=8000)
+        log(f"[provider] install {package}: {detail}")
+        events.emit("notice", text="安装完成" if ok else "安装失败，详情请看日志", hold=8000)
         self._report_providers()
 
     def handle_rest(self, short):
@@ -764,6 +808,20 @@ class Assistant:
             time.sleep(0.2)
 
 
+def with_defaults(cfg):
+    """An upgrade keeps the user's config.toml, which won't have settings added since."""
+    def fill(into, defaults):
+        for key, value in defaults.items():
+            if isinstance(value, dict) and isinstance(into.get(key), dict):
+                fill(into[key], value)
+            else:
+                into.setdefault(key, value)
+    with contextlib.suppress(OSError):
+        with open(os.path.join(HERE, "config.default.toml"), "rb") as f:
+            fill(cfg, tomllib.load(f))
+    return cfg
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=os.path.join(HERE, "config.toml"))
@@ -774,7 +832,7 @@ def main():
     ap.add_argument("--ui", action="store_true", help="print events for the desktop UI on stdout")
     args = ap.parse_args()
     with open(args.config, "rb") as f:
-        cfg = tomllib.load(f)
+        cfg = with_defaults(tomllib.load(f))
     events.enabled = args.ui
     sessions.migrate(HERE)
     cfg["claude"]["permission_mode"] = providers.current_permission(cfg["claude"].get("permission_mode"))
@@ -791,6 +849,8 @@ def main():
         a.bots.changed()
         a.schedules = schedules.Manager(cfg["claude"], log, a._report_sessions, args.dry_run)
         a.schedules.start()
+        threading.Thread(target=a._keep_models_current, daemon=True).start()
+        threading.Thread(target=a._watch_other_turns, daemon=True).start()
         a._report_sessions()
         events.emit("voice", on=a.voice_on)
         threading.Thread(target=a._read_commands, daemon=True).start()

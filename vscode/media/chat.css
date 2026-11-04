@@ -12,7 +12,11 @@ body{display:flex;flex-direction:column}
 .msg code{font-family:var(--vscode-editor-font-family);font-size:.92em;background:var(--vscode-textCodeBlock-background);padding:1px 4px;border-radius:3px}
 .tag{display:inline-block;font-size:11px;padding:1px 6px;border-radius:3px;background:var(--vscode-badge-background);color:var(--vscode-badge-foreground);margin:0 4px 3px 0}
 .error{color:var(--vscode-errorForeground);margin-top:4px}
-.dots{color:var(--vscode-descriptionForeground)}
+.dots{display:flex;align-items:center;gap:8px;color:var(--vscode-descriptionForeground)}
+.engine{flex:none;width:74px;height:37px;color:#c49a52;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round}
+.engine .frame,.engine .cyl{stroke-width:1;opacity:.6}
+.engine .beam{stroke-width:2.6}
+.engine .pst,.engine .pin,.engine .pivot{fill:currentColor;stroke:none}
 #bottom{padding:8px 10px;border-top:1px solid var(--vscode-panel-border,transparent);position:relative}
 #chips{display:flex;flex-wrap:wrap;gap:4px;margin-bottom:5px}
 #chips:empty{display:none}
@@ -23,8 +27,13 @@ body{display:flex;flex-direction:column}
 .chip.toggle{cursor:pointer}
 #input{width:100%;min-height:58px;max-height:220px;resize:none;padding:6px 8px;border-radius:4px;color:var(--vscode-input-foreground);background:var(--vscode-input-background);border:1px solid var(--vscode-input-border,var(--vscode-panel-border,transparent));font:inherit;outline:0}
 #input:focus{border-color:var(--vscode-focusBorder)}
-#row{display:flex;align-items:center;gap:5px;margin-top:5px}
-#row select{flex:0 1 auto;min-width:0;max-width:96px;padding:2px 4px;color:var(--vscode-dropdown-foreground);background:var(--vscode-dropdown-background);border:1px solid var(--vscode-dropdown-border,transparent);border-radius:3px;font:inherit}
+#row{display:flex;align-items:center;gap:2px;margin-top:5px}
+#pickers{flex:1;min-width:0;display:flex;flex-wrap:wrap;align-items:center;gap:0 1px;min-height:26px}
+#pickers select[hidden]{display:none}
+#pickers select{appearance:none;field-sizing:content;max-width:150px;height:24px;padding:0 12px 0 4px;border:0;border-radius:5px;color:var(--vscode-descriptionForeground);font:inherit;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer;
+  background:transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpath d='M2 3.800 5 6.800 8 3.800' fill='none' stroke='%23888' stroke-width='1.300' stroke-linecap='round'/%3E%3C/svg%3E") no-repeat right 2px center/9px}
+#pickers select:hover,#pickers select:focus{color:var(--vscode-foreground);background-color:var(--vscode-toolbar-hoverBackground,rgba(128,128,128,.18));outline:0}
+#pickers option{color:var(--vscode-dropdown-foreground);background:var(--vscode-dropdown-background)}
 #row .sp{flex:1}
 button{font:inherit;cursor:pointer;border:0;border-radius:3px;padding:3px 9px;color:var(--vscode-button-secondaryForeground);background:var(--vscode-button-secondaryBackground)}
 button.main{color:var(--vscode-button-foreground);background:var(--vscode-button-background)}
@@ -127,3 +136,5 @@ button.icon.busy{color:var(--vscode-button-foreground);background:var(--vscode-e
 .cfile.undone button{visibility:hidden}
 .mkind{opacity:.6;font-size:11px}
 .tplan{margin:2px 0 0 14px;font-size:12px}.tplan summary{cursor:pointer;color:var(--vscode-descriptionForeground)}
+#jump{position:absolute;left:50%;transform:translateX(-50%);bottom:100%;margin-bottom:6px;z-index:2;padding:3px 10px;border-radius:12px;background:var(--vscode-button-background);color:var(--vscode-button-foreground);border:0;cursor:pointer;font-size:12px;white-space:nowrap}
+#jump[hidden]{display:none}

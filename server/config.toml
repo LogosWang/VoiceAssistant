@@ -40,8 +40,6 @@ add_dirs = []
 # "auto" = auto-approves routine actions but blocks risky ones (those then fail instead of asking).
 # "bypassPermissions" = never asks, and anyone within earshot can say the wake word.
 permission_mode = "auto"
-# Empty = whatever ~/.claude/settings.json says.
-model = "claude-opus-5-5"
 # Continue the same conversation across commands (say "新对话" to start over).
 keep_session = true
 

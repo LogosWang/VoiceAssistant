@@ -12,6 +12,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CURRENT_FILE = os.path.join(HERE, ".provider")
@@ -21,6 +22,8 @@ PERMISSION_FILE = os.path.join(HERE, ".permission")
 PERMISSIONS = ("plan", "acceptEdits", "auto", "bypassPermissions")
 DEFAULT_PERMISSION = "auto"
 KEYCHAIN = "carnot-voice"
+PATH_CACHE_SECONDS = 86400
+MIRROR_FILE = os.path.join(HERE, "mirror.json")   # only the China edition has it
 CLAUDE_CODE = "@anthropic-ai/claude-code"
 
 PROVIDERS = {
@@ -31,10 +34,11 @@ PROVIDERS = {
     "gemini": {"name": "Gemini", "engine": "gemini", "cli": "gemini", "login": True, "package": "@google/gemini-cli",
                "key_env": "GEMINI_API_KEY", "key_url": "https://aistudio.google.com/apikey"},
     "zcode": {"name": "ZCode", "engine": "claude", "cli": "claude", "login": False, "package": CLAUDE_CODE, "key_env": "ANTHROPIC_AUTH_TOKEN",
-              "base_url": "https://api.z.ai/api/anthropic", "model": "glm-5.3",
-              "key_url": "https://z.ai/manage-apikey/apikey-list"},
+              "endpoints": [("https://api.z.ai/api/anthropic", "海外 Z.ai"), ("https://open.bigmodel.cn/api/anthropic", "国内智谱")],
+              "model": "glm-5.3", "newest": r"glm-(\d+(?:\.\d+)*)",
+              "key_url": "https://z.ai/manage-apikey/apikey-list", "key_url_china": "https://open.bigmodel.cn/usercenter/proj-mgmt/apikeys"},
     "deepseek": {"name": "DeepSeek", "engine": "claude", "cli": "claude", "login": False, "package": CLAUDE_CODE, "key_env": "ANTHROPIC_AUTH_TOKEN",
-                 "base_url": "https://api.deepseek.com/anthropic", "model": "deepseek-v4-pro",
+                 "base_url": "https://api.deepseek.com/anthropic", "model": "deepseek-v4-pro", "newest": r"deepseek-v(\d+(?:\.\d+)*)-pro",
                  "key_url": "https://platform.deepseek.com/api_keys"},
     "doubao": {"name": "豆包", "engine": "claude", "cli": "claude", "login": False, "package": CLAUDE_CODE, "key_env": "ANTHROPIC_AUTH_TOKEN",
                "base_url": "https://ark.cn-beijing.volces.com/api/coding", "model": "ark-code-latest",
@@ -42,17 +46,93 @@ PROVIDERS = {
 }
 
 
-def fix_path():
-    """An app started from Finder or at login has a bare PATH, and a login shell doesn't help when
-    the user's PATH is set in ~/.zshrc. Ask an interactive shell, then add the usual places."""
-    found = []
+def vendor_request(url, key, data=None):
+    """(status, body), 0 if it can't be reached. curl because the key goes in over stdin, out of any
+    process list, and it trusts what the system trusts."""
+    config = f'header = "x-api-key: {key}"\nheader = "Authorization: Bearer {key}"\n'
+    cmd = ["/usr/bin/curl", "-sS", "--max-time", "12", "-K", "-", "-w", "\n%{http_code}", "-H", "anthropic-version: 2023-06-01"]
+    if data is not None:
+        cmd += ["-H", "content-type: application/json", "--data-binary", json.dumps(data)]
+    try:
+        r = subprocess.run(cmd + [url], input=config, capture_output=True, text=True, timeout=20)
+        body, _, code = r.stdout.rpartition("\n")
+        return int(code or 0), body
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return 0, ""
+
+
+def _endpoints(pid):
+    """Mainland networks and accounts first in the China edition."""
+    found = PROVIDERS[pid].get("endpoints") or []
+    return list(reversed(found)) if os.path.exists(MIRROR_FILE) else list(found)
+
+
+def base_url(pid):
+    p = PROVIDERS[pid]
+    if not p.get("endpoints"):
+        return p.get("base_url")
+    urls = [u for u, _ in _endpoints(pid)]
+    with contextlib.suppress(OSError, ValueError, AttributeError):
+        with open(ENDPOINTS_FILE, encoding="utf-8") as f:
+            saved = json.load(f).get(pid)
+        if saved in urls:
+            return saved
+    return urls[0]
+
+
+def detect_endpoint(pid):
+    """A key belongs to one of a service's platforms, or to both: the first that takes it is kept."""
+    key, reachable = get_key(pid), None
+    for url, _ in _endpoints(pid):
+        code, _ = vendor_request(url + "/v1/messages", key, {"model": PROVIDERS[pid]["model"], "max_tokens": 1,
+                                                              "messages": [{"role": "user", "content": "hi"}]})
+        if code == 200:
+            reachable = url
+            break
+        if code and code not in (401, 403) and not reachable:   # the key is fine, the plan or model isn't
+            reachable = url
+    if reachable:
+        os.makedirs(CARNOT_HOME, exist_ok=True)
+        saved = {}
+        with contextlib.suppress(OSError, ValueError):
+            with open(ENDPOINTS_FILE, encoding="utf-8") as f:
+                saved = json.load(f)
+        saved[pid] = reachable
+        with open(ENDPOINTS_FILE, "w", encoding="utf-8") as f:
+            json.dump(saved, f)
+    return reachable
+
+
+def endpoint_label(pid):
+    return dict(PROVIDERS[pid].get("endpoints") or []).get(base_url(pid), "")
+
+
+def _shell_path(fresh):
+    """What an interactive shell says, remembered for a day: asking costs most of a second, every turn."""
+    cache = os.path.join(CARNOT_HOME, "shell_path")
+    if not fresh:
+        with contextlib.suppress(OSError):
+            if time.time() - os.path.getmtime(cache) < PATH_CACHE_SECONDS:
+                with open(cache, encoding="utf-8") as f:
+                    return f.read().strip().split(":")
     try:
         r = subprocess.run(["/bin/zsh", "-ilc", 'print -r -- "__PATH__$PATH"'], capture_output=True, text=True,
                            stdin=subprocess.DEVNULL, timeout=10)
-        m = re.search(r"__PATH__(.*)", r.stdout)
-        found = m.group(1).split(":") if m else []
     except (OSError, subprocess.TimeoutExpired):
-        pass
+        return []
+    m = re.search(r"__PATH__(.*)", r.stdout)
+    if not m:
+        return []
+    with contextlib.suppress(OSError):
+        with open(cache, "w", encoding="utf-8") as f:
+            f.write(m.group(1))
+    return m.group(1).split(":")
+
+
+def fix_path(fresh=False):
+    """An app started from Finder or at login has a bare PATH, and a login shell doesn't help when
+    the user's PATH is set in ~/.zshrc. Ask an interactive shell, then add the usual places."""
+    found = _shell_path(fresh)
     home = os.path.expanduser("~")
     usual = ["/opt/homebrew/bin", "/opt/homebrew/sbin", "/usr/local/bin", f"{home}/.local/bin", f"{home}/bin",
              f"{home}/.npm-global/bin"]
@@ -122,13 +202,14 @@ def env(pid):
             out["OPENAI_API_KEY"] = key
         if pid == "gemini":
             out["GEMINI_CLI_HOME"] = gemini_key_home()
-    if p.get("base_url"):
-        out["ANTHROPIC_BASE_URL"] = p["base_url"]
+    if p.get("base_url") or p.get("endpoints"):
+        out["ANTHROPIC_BASE_URL"] = base_url(pid)
         out["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
     return out
 
 
 CARNOT_HOME = os.path.expanduser(os.environ.get("CARNOT_HOME", "~/.carnot"))
+ENDPOINTS_FILE = os.path.join(CARNOT_HOME, "endpoints.json")
 GEMINI_CREDS = os.path.expanduser("~/.gemini/oauth_creds.json")
 GEMINI_REFUSED = os.path.join(CARNOT_HOME, "gemini_refused")
 
@@ -207,6 +288,7 @@ def statuses():
         signed_in = installed and p["login"] and logged_in(pid)
         items.append({"id": pid, "name": p["name"], "installed": installed, "login": p["login"],
                       "signed_in": signed_in, "has_key": has_key, "ready": installed and (has_key or signed_in),
-                      "key_url": p["key_url"], "package": p.get("package", ""),
+                      "key_url": (os.path.exists(MIRROR_FILE) and p.get("key_url_china")) or p["key_url"],
+                      "endpoint": endpoint_label(pid), "package": p.get("package", ""),
                       "needs": "Claude Code" if p["cli"] == "claude" else p["cli"].capitalize()})
     return {"current": current(), "items": items}

@@ -1,0 +1,13 @@
+#!/bin/bash
+# An old copy still running would keep its old code, and hold the mic, until the next login. postinstall
+# opens the new one. Nothing here may fail the install.
+USER_NAME="$(stat -f%Su /dev/console)"
+pkill -u "$USER_NAME" -x Carnot
+pkill -u "$USER_NAME" -f "voice_server.py --ui"
+for _ in 1 2 3 4 5; do
+  pgrep -u "$USER_NAME" -x Carnot >/dev/null || pgrep -u "$USER_NAME" -f "voice_server.py --ui" >/dev/null || break
+  sleep 1
+done
+pkill -9 -u "$USER_NAME" -x Carnot
+pkill -9 -u "$USER_NAME" -f "voice_server.py --ui"
+exit 0

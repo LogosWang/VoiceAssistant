@@ -14,6 +14,12 @@ macOS 桌面助手：屏幕上常驻一个人物，可以语音唤醒，也可�
 
 **最简单：** 下载 `Carnot-Installer.pkg`，双击安装。不需要 Homebrew 或开发工具，语音模型和运行环境都在包里。要求 Apple 芯片的 Mac 和 macOS 14 以上。
 
+**模型和 Effort：** 设置窗口、悬浮窗输入栏和 VS Code 聊天框都能选，列表从各厂家实时获取。选“默认”会跟随厂家更新。
+
+**更新：** 直接运行新的安装包就会覆盖更新，不用卸载，设置、登录和对话都会保留。
+
+**国内网络：** 用 `Carnot-Installer-CN.pkg`，它从 npmmirror（备用华为云）下载 Claude Code，下载内容按打包时与官方核对过的校验值验证。打包命令是 `CARNOT_EDITION=cn packaging/build_pkg.sh`。
+
 这个安装包没有经过 Apple 公证，第一次双击会被系统拦下。到"系统设置 → 隐私与安全性"，在页面下方点"仍要打开"，再输入密码。
 
 **从源码安装：** 需要 macOS 13 以上和 [Homebrew](https://brew.sh)。其余依赖由脚本安装，首次约需下载 1 GB 模型。

@@ -5,31 +5,32 @@
 *{box-sizing:border-box}
 html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-family:"Songti SC","PingFang SC",-apple-system,serif;user-select:none;-webkit-user-select:none}
 #stage{position:absolute;inset:0}
-#subs{position:fixed;left:4px;right:4px;bottom:54px;z-index:5;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none}
+#subs{position:fixed;left:4px;right:4px;bottom:48px;z-index:5;display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:none}
 .bubble{max-width:100%;padding:5px 10px;border-radius:3px;font-size:14px;line-height:1.4;color:#f3ecdd;background:rgba(24,22,28,.9);border:1px solid rgba(196,154,82,.75);outline:1px solid rgba(196,154,82,.28);outline-offset:2px;box-shadow:0 3px 12px rgba(0,0,0,.35);word-break:break-word;transition:opacity .35s,transform .35s;display:-webkit-box;-webkit-box-orient:vertical;overflow:hidden}
 .bubble.off{opacity:0;transform:translateY(6px);pointer-events:none}
 #user{font-size:12px;padding:3px 9px;color:#e8dcc4;background:rgba(58,30,38,.92);-webkit-line-clamp:1}
 #user.partial{color:#b9a78f;font-style:italic}
 #reply{font-size:13px;-webkit-line-clamp:3}
 #notice{font-size:12px;background:rgba(110,36,51,.95);-webkit-line-clamp:3}
-#inputbar{position:fixed;left:4px;right:4px;bottom:4px;height:44px;display:flex;align-items:center;gap:5px;padding:5px 6px;background:rgba(24,22,28,.96);border:1px solid rgba(196,154,82,.85);outline:1px solid rgba(196,154,82,.28);outline-offset:2px;border-radius:3px;box-shadow:0 3px 12px rgba(0,0,0,.35)}
-#input{flex:1;min-width:0;background:none;border:0;outline:0;color:#f3ecdd;font:15px/1.4 "Songti SC","PingFang SC",serif;user-select:text;-webkit-user-select:text}
+#inputbar{position:fixed;left:3px;right:3px;bottom:3px;height:38px;display:flex;align-items:center;gap:4px;padding:4px 5px;background:rgba(24,22,28,.96);border:1px solid rgba(196,154,82,.85);outline:1px solid rgba(196,154,82,.28);outline-offset:2px;border-radius:3px;box-shadow:0 3px 12px rgba(0,0,0,.35)}
+#input{flex:1;min-width:0;background:none;border:0;outline:0;color:#f3ecdd;font:13px/1.4 "Songti SC","PingFang SC",serif;user-select:text;-webkit-user-select:text}
 #input::placeholder{color:#8f8676}
-#inputbar button{flex:none;height:30px;border:1px solid var(--brass);background:#2c2620;color:#e0bf7c;cursor:pointer;font:13px "Songti SC","PingFang SC",serif}
-#prov{max-width:58px;padding:0 7px;border-radius:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#inputbar button{flex:none;height:26px;border:1px solid var(--brass);background:#2c2620;color:#e0bf7c;cursor:pointer;font:12px "Songti SC","PingFang SC",serif}
+#prov{max-width:68px;padding:0 5px;border-radius:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 #prov.bad{color:#e8a06a;border-color:#a8505f}
-#attach,#sendbtn,#voice,#tasks{width:30px;border-radius:50%;padding:0}
-#voice,#tasks{display:flex;align-items:center;justify-content:center}
-#voice svg,#tasks svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:none}
+#attach,#sendbtn,#voice{width:26px;border-radius:50%;padding:0}
+#voice{display:flex;align-items:center;justify-content:center}
+#sendbtn.stop{position:relative;border-radius:7px;border-color:#e8735f;background:#e8735f;color:transparent}
+#sendbtn.stop::after{content:"";position:absolute;left:8px;top:8px;width:8px;height:8px;border-radius:2px;background:#fff}
+#voice svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;filter:none}
 #voice .slash{display:none}
-#inputbar:has(#input:not(:placeholder-shown)) #tasks{display:none}
 #voice.off{color:#8f8676;border-color:#57503f;background:#1c1a1e}
 #voice.off .slash{display:inline}
-#chips{position:fixed;left:4px;right:4px;bottom:52px;z-index:6;display:flex;flex-wrap:nowrap;overflow:hidden;justify-content:center;gap:4px}
+#chips{position:fixed;left:4px;right:4px;bottom:46px;z-index:6;display:flex;flex-wrap:nowrap;overflow:hidden;justify-content:center;gap:4px}
 .chip{display:flex;align-items:center;gap:4px;max-width:140px;min-width:0;padding:2px 3px 2px 7px;background:rgba(24,22,28,.94);border:1px solid rgba(196,154,82,.7);border-radius:2px;color:#e8dcc4;font-size:12px}
 .chip span{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .chip b{cursor:pointer;color:#c49a52;font-weight:400;padding:0 3px}
-#char{position:fixed;left:50%;bottom:52px;margin-left:-160px;width:320px;height:416px;transform:scale(.62);transform-origin:50% 100%}
+#char{position:fixed;left:50%;bottom:46px;margin-left:-160px;width:320px;height:416px;transform:scale(.5);transform-origin:50% 100%}
 #char img{position:absolute;display:block;pointer-events:none}
 #engine,#engineFront{left:0;top:70px;width:320px}
 .rod{width:42.1px;top:15.2px}
@@ -87,7 +88,7 @@ html,body{margin:0;height:100%;background:transparent;overflow:hidden;font-famil
   <div id="hint"><span>z</span> <span>z</span></div>
 </div></div>
 <div id="chips"></div>
-<form id="inputbar"><button id="prov" type="button" title="连接设置">Claude</button><button id="voice" type="button" title="语音模式：开"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path class="slash" d="M4 3l16 18"/></svg></button><button id="tasks" type="button" title="定时任务"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7v5l3.5 2"/></svg></button><button id="attach" type="button" title="附加文件或文件夹">＋</button><input id="input" placeholder="写给 Carnot…" autocomplete="off" spellcheck="false"><button id="sendbtn" type="submit">➤</button></form>
+<form id="inputbar"><button id="prov" type="button" title="模型和连接">Claude</button><button id="voice" type="button" title="语音模式：开"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/><path class="slash" d="M4 3l16 18"/></svg></button><button id="attach" type="button" title="附加文件或文件夹">＋</button><input id="input" placeholder="写给 Carnot" autocomplete="off" spellcheck="false"><button id="sendbtn" type="submit">➤</button></form>
 <script>
 const $ = id => document.getElementById(id);
 const stage = $("stage");
@@ -200,6 +201,7 @@ function scheduleClear() {   // text that wasn't read aloud needs time to be rea
   const wait = voiceOn ? HOLD : Math.min(60000, HOLD + $("reply").textContent.length * 200);
   clearT = setTimeout(() => { hide($("user")); hide($("reply")); }, wait);
 }
+let modelState = {}, currentProvider = null, providerItems = [], providerNote = "", answering = false;
 window.carnot = ev => {
   if (ev.type === "state") {
     stage.dataset.state = ev.state;
@@ -229,18 +231,37 @@ window.carnot = ev => {
   } else if (ev.type === "attached") {
     for (const p of ev.paths) if (!attached.includes(p)) attached.push(p);
     drawChips();
+  } else if (ev.type === "models") {
+    modelState = ev.items; drawModelTitle();
+  } else if (ev.type === "turn") {
+    answering = ev.on; drawSend();
   } else if (ev.type === "providers") {
+    currentProvider = ev.current; providerItems = ev.items; drawModelTitle();
     const p = ev.items.find(i => i.id === ev.current);
-    $("prov").textContent = p.name; $("prov").classList.toggle("bad", !p.ready);
+    $("prov").classList.toggle("bad", !p.ready);
     const open = ev.permission === "bypassPermissions";
     $("prov").classList.toggle("bad", !p.ready || open);
-    $("prov").title = !p.ready ? `${p.name} 还没连接，点这里设置` : open ? "权限：完全放行。点这里更改" : "连接和权限设置";
+    providerNote = !p.ready ? `${p.name} 还没连接` : open ? "权限：完全放行" : "";
+    drawModelTitle();
   }
 };
 
 // ---------- typed input ----------
 const bar = $("inputbar"), input = $("input");
 const native = m => window.webkit?.messageHandlers?.carnot?.postMessage(m);
+const EFFORT_NAMES = {low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高"};
+function drawModelTitle() {
+  const c = modelState[currentProvider], p = providerItems.find(i => i.id === currentProvider);
+  if (!p) return;
+  const name = c ? c.models.find(m => m.id === c.selected)?.name || c.selected : "";
+  $("prov").textContent = name || p.name;
+  $("prov").title = [p.name, name, c?.shown_effort && `Effort ${EFFORT_NAMES[c.shown_effort]}`, providerNote].filter(Boolean).join(" · ");
+}
+function drawSend() {
+  const stop = answering && !input.value.trim() && !attached.length;
+  $("sendbtn").classList.toggle("stop", stop);
+  $("sendbtn").title = stop ? "停止" : "发送";
+}
 let attached = [];
 function drawChips() {
   const box = $("chips"); box.textContent = "";
@@ -257,7 +278,7 @@ bar.addEventListener("submit", e => {
   const text = input.value.trim();
   if (e.isComposing || (!text && !attached.length)) return;
   native({type: "server", payload: {type: "text", text, paths: attached}});
-  input.value = ""; attached = []; drawChips();
+  input.value = ""; attached = []; drawChips(); drawSend();
 });
 input.addEventListener("keydown", e => {
   if (e.key === "Escape" && !e.isComposing) { input.value = ""; native({type: "closeInput"}); }
@@ -265,8 +286,28 @@ input.addEventListener("keydown", e => {
 input.addEventListener("focus", () => native({type: "focused"}));
 $("attach").onclick = () => native({type: "attach"});
 $("voice").onclick = () => native({type: "server", payload: {type: "voice", on: !voiceOn}});
-$("prov").onclick = () => native({type: "settings"});
-$("tasks").onclick = () => native({type: "schedules"});
+$("prov").onclick = () => {
+  const c = modelState[currentProvider];
+  const items = [{title: "AI"}];
+  for (const p of providerItems) items.push({title: p.name + (p.ready ? "" : "（未连接）"), on: p.id === currentProvider, payload: {type: "use", provider: p.id}});
+  if (c) {
+    const set = (model, effort) => ({type: "model_set", provider: currentProvider, model, effort});
+    items.push({separator: true}, {title: "模型"});
+    for (const m of c.models) items.push({title: m.name, on: c.selected === m.id, payload: set(m.id, c.effort || "")});
+    if (c.efforts.length) {
+      items.push({separator: true}, {title: "Effort"});
+      for (const e of c.efforts) items.push({title: (EFFORT_NAMES[e] || e) + (c.mapped[e] ? `（按${EFFORT_NAMES[c.mapped[e]]}）` : ""), on: c.shown_effort === e, payload: set(c.selected, e)});
+    }
+  }
+  items.push({separator: true}, {title: "连接设置…", action: "settings"}, {title: "定时任务…", action: "schedules"});
+  native({type: "menu", items});
+};
+$("sendbtn").addEventListener("click", e => {
+  if (!$("sendbtn").classList.contains("stop")) return;
+  e.preventDefault();
+  native({type: "server", payload: {type: "stop"}});
+});
+input.addEventListener("input", drawSend);
 
 // ---------- preview: index.html?state=speaking&still=1&eyes=1&user=..&reply=.. ----------
 if (q.get("state")) {

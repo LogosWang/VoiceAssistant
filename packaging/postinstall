@@ -16,10 +16,12 @@ DEST="$USER_HOME/Library/Application Support/Carnot"
 SERVER="$DEST/server"
 mkdir -p "$DEST"
 
-# an upgrade keeps the user's settings
+# an upgrade keeps the user's settings, here and in ~/.carnot
 KEEP=""
 if [ -f "$SERVER/config.toml" ]; then KEEP="$(mktemp)"; cp "$SERVER/config.toml" "$KEEP"; fi
 rm -rf "$SERVER/.venv" "$SERVER/models"
+# what this version doesn't ship must not stay behind, like the other edition's mirror list
+find "$SERVER" -maxdepth 1 -type f \( -name '*.py' -o -name mirror.json \) -delete 2>/dev/null
 ditto "$PAYLOAD/server" "$SERVER"
 [ -z "$KEEP" ] || { cp "$KEEP" "$SERVER/config.toml"; rm -f "$KEEP"; }
 xattr -dr com.apple.quarantine "$DEST" 2>/dev/null
@@ -45,7 +47,12 @@ for CODE in "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/cod
 done
 
 if ! as_user /bin/zsh -ilc 'command -v claude' >/dev/null 2>&1 && [ ! -x "$USER_HOME/.local/bin/claude" ]; then
-  as_user /bin/bash -c 'curl -fsSL https://claude.ai/install.sh | bash' >/dev/null 2>&1
+  if [ -f "$SERVER/mirror.json" ]; then
+    # in the background: the installer gives a script 10 minutes, and fails the whole install past that
+    as_user /bin/sh -c 'nohup "$1" "$2" install claude > "$3" 2>&1 &' sh "$PY" "$SERVER/carnot_agent.py" "$CARNOT_HOME_DIR/claude-install.log"
+  else
+    as_user /bin/bash -c 'curl -fsSL https://claude.ai/install.sh | bash' >/dev/null 2>&1
+  fi
 fi
 
 as_user /usr/bin/open /Applications/Carnot.app

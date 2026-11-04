@@ -64,12 +64,15 @@ function agent(args, { input = "", keepOpen = false, onEvent = () => {}, onSpawn
     const child = cp.spawn(python, [path.join(dir, "carnot_agent.py"), ...args], { cwd: dir, env: process.env });
     onSpawn(child);
     let buf = "", err = "";
+    child.stdout.setEncoding("utf8");  // a character can fall across two chunks
     child.stdout.on("data", d => {
       buf += d;
       let i;
       while ((i = buf.indexOf("\n")) >= 0) {
         const line = buf.slice(0, i); buf = buf.slice(i + 1);
-        try { onEvent(JSON.parse(line)); } catch { /* not ours */ }
+        let event;
+        try { event = JSON.parse(line); } catch { continue; /* not ours */ }
+        try { onEvent(event); } catch (e) { console.error("carnot: event failed", event.type, e); }
       }
     });
     child.stderr.on("data", d => { err += d; });
@@ -143,19 +146,37 @@ class Chat {
     if (m.type === "stop") { if (this.child) this.child.kill("SIGTERM"); return; }
     if (m.type === "provider") { this.provider = m.id; await this.context.globalState.update("provider", m.id); return this.refresh(); }
     if (m.type === "permission") return this.setPermission(m.mode);
+    if (m.type === "setModel") return this.showModels(await agentResult(["model-set", m.provider, m.model || "", m.effort || ""]));
     if (m.type === "attach") return this.pick();
     if (m.type === "connections") return this.connections();
   }
 
   async refresh() {
-    const status = await agentResult(["status"]);
-    const skills = await agentResult(["skills"]);
-    const commands = await agentResult(["commands"]);
+    const [status, skills, commands, models] = await Promise.all([agentResult(["status"]), agentResult(["skills"]), agentResult(["commands"]), agentResult(["models"])]);
     if (!this.provider) this.provider = status.current;
     this.status = status;
     this.skills = skills.items;
-    this.post({ type: "state", provider: this.provider, providers: status.items, skills: skills.items, commands: commands.items,
-                messages: this.messages, conv: this.conv, busy: !!this.child, file: this.fileLabel(), permission: permissionMode() });
+    this.commands = commands.items;
+    this.models = models.items;
+    this.postState();
+    agentResult(["models", "--refresh"]).then(r => this.showModels(r)).catch(() => {});  // a vendor may have new ones
+  }
+
+  showModels(r) {
+    if (!r) return;
+    this.models = r.items;
+    this.post({ type: "models", items: r.items });
+  }
+
+  /** The app may have changed the choice: it lives in one place, for both. */
+  async reloadModels() { this.showModels(await agentResult(["models"])); }
+
+  /** Switching conversations changes none of what refresh() asks for, and asking takes seconds. */
+  showConversation() { return this.status ? this.postState() : this.refresh(); }
+
+  postState() {
+    this.post({ type: "state", provider: this.provider, providers: this.status.items, skills: this.skills, commands: this.commands, models: this.models,
+                messages: this.messages, conv: this.conv, busy: !!this.child || !!this.sending, file: this.fileLabel(), permission: permissionMode() });
   }
 
   async setPermission(mode) {
@@ -316,7 +337,7 @@ class Chat {
     if (this.child) this.child.kill("SIGTERM");
     this.conv = null;
     this.messages = [];
-    return this.refresh();
+    return this.showConversation();
   }
 
   /** The list of every conversation, from any client, in the chat view. */
@@ -327,11 +348,10 @@ class Chat {
 
   async open(id) {
     if (this.child) return this.post({ type: "error", text: "当前回答还没结束，停止后再切换。" });
-    const h = await agentResult(["history", id]);
-    const list = await agentResult(["sessions"]);
+    const [h, list] = await Promise.all([agentResult(["history", id]), agentResult(["sessions"])]);
     this.conv = list.items.find(i => i.id === id) || { id, title: h.title };
     this.messages = h.messages;
-    await this.refresh();
+    await this.showConversation();
   }
 
   async rename(id, title) {
@@ -354,11 +374,8 @@ class Chat {
   // ---------- a turn ----------
 
   async send(text, paths, skill, withFile) {
-    if (this.child) return;
-    if (!this.conv) {
-      const made = await agentResult(["session-new"]);
-      this.conv = { id: made.id, title: text.slice(0, 28) || "新对话", client: "vscode" };
-    }
+    if (this.child || this.sending) return;
+    if (!this.provider) await this.refresh();
     const pid = this.provider;
     let prompt = text || "请看附件。";
     const dirs = [];
@@ -379,10 +396,17 @@ class Chat {
     this.messages.push(reply);
     this.post({ type: "user", text, paths, skill });
     this.post({ type: "busy", on: true, provider: pid });
+    this.sending = true;  // no child yet while the conversation is being made
     try {
+      if (!this.conv) {
+        const made = await agentResult(["session-new"]);
+        this.conv = { id: made.id, title: text.slice(0, 28) || "新对话", client: "vscode" };
+      }
       await this.turn(pid, prompt, shown, dirs, reply, false);
     } finally {
       this.child = null;
+      this.sending = false;
+      this.reloadModels().catch(() => {});
       closePreviews();
       this.post({ type: "busy", on: false });
     }
@@ -563,6 +587,9 @@ function activate(context) {
   });
   context.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(() => {
     for (const c of [chat, ...tabs]) c.post({ type: "file", file: c.fileLabel() });
+  }));
+  context.subscriptions.push(vscode.window.onDidChangeWindowState(s => {
+    if (s.focused) for (const c of [chat, ...tabs]) if (c.host) c.reloadModels().catch(() => {});
   }));
   return { chat, tabs, agent, agentResult };
 }
