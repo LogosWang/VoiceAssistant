@@ -201,7 +201,7 @@ function scheduleClear() {   // text that wasn't read aloud needs time to be rea
   const wait = voiceOn ? HOLD : Math.min(60000, HOLD + $("reply").textContent.length * 200);
   clearT = setTimeout(() => { hide($("user")); hide($("reply")); }, wait);
 }
-let modelState = {}, currentProvider = null, providerItems = [], providerNote = "", answering = false;
+let modelState = {}, computerMode = "off", currentProvider = null, providerItems = [], providerNote = "", answering = false;
 window.carnot = ev => {
   if (ev.type === "state") {
     stage.dataset.state = ev.state;
@@ -232,7 +232,7 @@ window.carnot = ev => {
     for (const p of ev.paths) if (!attached.includes(p)) attached.push(p);
     drawChips();
   } else if (ev.type === "models") {
-    modelState = ev.items; drawModelTitle();
+    modelState = ev.items; computerMode = ev.computer || "off"; drawModelTitle();
   } else if (ev.type === "turn") {
     answering = ev.on; drawSend();
   } else if (ev.type === "providers") {
@@ -250,12 +250,13 @@ window.carnot = ev => {
 const bar = $("inputbar"), input = $("input");
 const native = m => window.webkit?.messageHandlers?.carnot?.postMessage(m);
 const EFFORT_NAMES = {low: "低", medium: "中", high: "高", xhigh: "超高", max: "最高"};
+const COMPUTER_MODES = [["off", "关闭"], ["background", "后台操作（做不到时问你再接管）"], ["full", "接管鼠标键盘"]];
 function drawModelTitle() {
   const c = modelState[currentProvider], p = providerItems.find(i => i.id === currentProvider);
   if (!p) return;
   const name = c ? c.models.find(m => m.id === c.selected)?.name || c.selected : "";
   $("prov").textContent = name || p.name;
-  $("prov").title = [p.name, name, c?.shown_effort && `Effort ${EFFORT_NAMES[c.shown_effort]}`, providerNote].filter(Boolean).join(" · ");
+  $("prov").title = [p.name, name, c?.shown_effort && `Effort ${EFFORT_NAMES[c.shown_effort]}`, {background: "计算机使用：后台", full: "计算机使用：接管"}[computerMode], providerNote].filter(Boolean).join(" · ");
 }
 function drawSend() {
   const stop = answering && !input.value.trim() && !attached.length;
@@ -299,6 +300,8 @@ $("prov").onclick = () => {
       for (const e of c.efforts) items.push({title: (EFFORT_NAMES[e] || e) + (c.mapped[e] ? `（按${EFFORT_NAMES[c.mapped[e]]}）` : ""), on: c.shown_effort === e, payload: set(c.selected, e)});
     }
   }
+  items.push({separator: true}, {title: "计算机使用"});
+  for (const [mode, title] of COMPUTER_MODES) items.push({title, on: computerMode === mode, payload: {type: "computer_set", mode}});
   items.push({separator: true}, {title: "连接设置…", action: "settings"}, {title: "定时任务…", action: "schedules"});
   native({type: "menu", items});
 };

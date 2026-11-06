@@ -25,6 +25,7 @@ import threading
 import agent_core
 import checkpoints
 import cli_install
+import computer
 import model_choice
 import providers
 import schedules
@@ -184,6 +185,7 @@ def main():
     rn.add_argument("id")
     rn.add_argument("title")
     sub.add_parser("models").add_argument("--refresh", action="store_true")
+    sub.add_parser("computer-set").add_argument("mode", choices=computer.MODES)
     ms = sub.add_parser("model-set")
     ms.add_argument("provider", choices=list(providers.PROVIDERS))
     ms.add_argument("model", nargs="?", default="")
@@ -225,10 +227,13 @@ def main():
     elif args.action == "models":
         if args.refresh:
             model_choice.refresh_stale()
-        out(type="models", items=model_choice.listing())
+        out(type="models", items=model_choice.listing(), computer=computer.mode())
     elif args.action == "model-set":
         model_choice.set_choice(args.provider, args.model, args.effort)
-        out(type="models", items=model_choice.listing())
+        out(type="models", items=model_choice.listing(), computer=computer.mode())
+    elif args.action == "computer-set":
+        computer.set_mode(args.mode)
+        out(type="models", items=model_choice.listing(), computer=computer.mode())
     elif args.action == "seed":
         out(type="memory", dir=shared.MEMORY_DIR)
     elif args.action == "set-key":

@@ -6,7 +6,7 @@ document.body.insertAdjacentHTML("afterbegin", `<div id="bar"><span id="convTitl
   <div id="history" hidden><input id="historySearch" placeholder="搜索标题"><div id="historyList"></div></div>`);
 bottom.innerHTML = `<div id="menu" hidden></div><div id="chips"></div>
   <textarea id="input" placeholder="给 Carnot 发消息。/ 命令和 skill，@ 引用文件，可粘贴图片。Enter 发送，Shift+Enter 换行"></textarea>
-  <div id="row"><button id="attach" class="icon" title="附加文件或文件夹（也可以粘贴图片、输入 @）"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button><div id="pickers"><select id="provider" title="使用的 AI"></select><select id="model" title="模型，从下一条消息开始生效"></select><select id="effort" title="Effort（思考力度），从下一条消息开始生效"></select><select id="permission" title="AI 的权限，从下一条消息开始生效"><option value="plan">计划模式</option><option value="manual">每次询问</option><option value="acceptEdits">可改文件</option><option value="auto">自动</option><option value="bypassPermissions">完全放行</option></select></div><span id="usage"></span><button id="send" class="icon main" title="发送"></button></div>`;
+  <div id="row"><button id="attach" class="icon" title="附加文件或文件夹（也可以粘贴图片、输入 @）"><svg viewBox="0 0 16 16"><path d="M8 3v10M3 8h10"/></svg></button><div id="pickers"><select id="provider" title="使用的 AI"></select><select id="model" title="模型，从下一条消息开始生效"></select><select id="effort" title="Effort（思考力度），从下一条消息开始生效"></select><select id="permission" title="AI 的权限，从下一条消息开始生效"><option value="plan">计划模式</option><option value="manual">每次询问</option><option value="acceptEdits">可改文件</option><option value="auto">自动</option><option value="bypassPermissions">完全放行</option></select><select id="computer" title="计算机使用：让 AI 操作这台 Mac 上的程序，从下一条消息开始生效"><option value="off">不用电脑</option><option value="background">后台用电脑</option><option value="full">接管电脑</option></select></div><span id="usage"></span><button id="send" class="icon main" title="发送"></button></div>`;
 const ICON_SEND = '<svg viewBox="0 0 16 16"><path d="M8 13V3M3.500 7.500 8 3l4.500 4.500"/></svg>';
 const ICON_STOP = '<svg viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" rx="1" class="solid"/></svg>';
 const $ = id => document.getElementById(id);
@@ -618,6 +618,7 @@ $("attach").onclick = () => vs.postMessage({ type: "attach" });
 $("provider").onchange = e => { current = e.target.value; drawModels(); vs.postMessage({ type: "provider", id: current }); };
 $("model").onchange = pickModel;
 $("effort").onchange = pickEffort;
+$("computer").onchange = e => vs.postMessage({ type: "setComputer", mode: e.target.value });
 $("permission").onchange = e => vs.postMessage({ type: "permission", mode: e.target.value });
 
 // every copy button: code blocks and tool input/output
@@ -634,11 +635,13 @@ window.addEventListener("message", ({ data: m }) => {
   if (m.type === "state") {
     providers = m.providers; current = m.provider; skills = m.skills; commands = m.commands || []; file = m.file; models = m.models || {}; drawProviders(); drawModels(); drawChips();
     $("permission").value = m.permission;
+    $("computer").value = m.computer || "off";
     drawConv(m.conv);
     if (!busy || (m.busy && !live)) { live = drawHistory(m.messages, m.busy); if (live) requestAnimationFrame(turnEngine); }
     setBusy(m.busy);
   } else if (m.type === "models") {
     models = m.items; drawModels();
+    if (m.computer) $("computer").value = m.computer;
   } else if (m.type === "historyList") {
     historyItems = m.items; openId = m.open; $("history").hidden = false; log.hidden = true; drawHistory_(); $("historySearch").focus();
   } else if (m.type === "user") {

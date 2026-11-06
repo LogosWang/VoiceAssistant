@@ -68,7 +68,7 @@ cp "$M/silero_vad.onnx" "$SERVER/models/"
 step "Carnot.app"
 APP="$STAGE/root/Applications/Carnot.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-swiftc -O -target "arm64-apple-macos$OS_MIN" -o "$APP/Contents/MacOS/Carnot" app/main.swift
+swiftc -O -target "arm64-apple-macos$OS_MIN" -o "$APP/Contents/MacOS/Carnot" app/main.swift app/computer.swift
 cp app/Info.plist "$APP/Contents/Info.plist"
 plutil -replace CarnotServerDir -string '~/Library/Application Support/Carnot/server' "$APP/Contents/Info.plist"
 plutil -replace LSMinimumSystemVersion -string "$OS_MIN" "$APP/Contents/Info.plist"

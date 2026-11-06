@@ -27,6 +27,7 @@ from pypinyin import lazy_pinyin
 
 import bots
 import cli_install
+import computer
 import model_choice
 import schedules
 import events
@@ -476,7 +477,7 @@ class Assistant:
     def _report_providers(self):
         def report():
             events.emit("providers", permission=self.cfg["claude"]["permission_mode"], **providers.statuses())
-            events.emit("models", items=model_choice.listing())
+            events.emit("models", items=model_choice.listing(), computer=computer.mode())
         threading.Thread(target=report, daemon=True).start()
 
     def _watch_other_turns(self):
@@ -521,6 +522,9 @@ class Assistant:
             self.bridge.stop()
             self.speaker.stop()
             return self.refresh_state()
+        if kind == "computer_set":
+            computer.set_mode(m.get("mode"))
+            return log(f"[computer] {m.get('mode')}")
         if kind == "model_set":
             return model_choice.set_choice(pid, m.get("model"), m.get("effort"))
         if kind == "voice":

@@ -146,6 +146,7 @@ class Chat {
     if (m.type === "stop") { if (this.child) this.child.kill("SIGTERM"); return; }
     if (m.type === "provider") { this.provider = m.id; await this.context.globalState.update("provider", m.id); return this.refresh(); }
     if (m.type === "permission") return this.setPermission(m.mode);
+    if (m.type === "setComputer") return this.showModels(await agentResult(["computer-set", m.mode]));
     if (m.type === "setModel") return this.showModels(await agentResult(["model-set", m.provider, m.model || "", m.effort || ""]));
     if (m.type === "attach") return this.pick();
     if (m.type === "connections") return this.connections();
@@ -158,6 +159,7 @@ class Chat {
     this.skills = skills.items;
     this.commands = commands.items;
     this.models = models.items;
+    this.computer = models.computer;
     this.postState();
     agentResult(["models", "--refresh"]).then(r => this.showModels(r)).catch(() => {});  // a vendor may have new ones
   }
@@ -165,7 +167,8 @@ class Chat {
   showModels(r) {
     if (!r) return;
     this.models = r.items;
-    this.post({ type: "models", items: r.items });
+    this.computer = r.computer;
+    this.post({ type: "models", items: r.items, computer: r.computer });
   }
 
   /** The app may have changed the choice: it lives in one place, for both. */
@@ -175,7 +178,7 @@ class Chat {
   showConversation() { return this.status ? this.postState() : this.refresh(); }
 
   postState() {
-    this.post({ type: "state", provider: this.provider, providers: this.status.items, skills: this.skills, commands: this.commands, models: this.models,
+    this.post({ type: "state", provider: this.provider, providers: this.status.items, skills: this.skills, commands: this.commands, models: this.models, computer: this.computer,
                 messages: this.messages, conv: this.conv, busy: !!this.child || !!this.sending, file: this.fileLabel(), permission: permissionMode() });
   }
 

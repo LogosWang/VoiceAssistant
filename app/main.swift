@@ -198,12 +198,15 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
     var sessionItems = [[String: Any]]()
     var currentSession = ""
     var chipsShown = false
+    var computer: ComputerUse!
 
     init(serverArgs: [String]) { self.serverArgs = serverArgs }
 
     func applicationDidFinishLaunching(_ n: Notification) {
         makeEditMenu()
         makePanel()
+        computer = ComputerUse(notify: { [weak self] in self?.send($0) })
+        computer.start()
         status = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         status.button?.image = NSImage(systemSymbolName: "waveform.circle", accessibilityDescription: "Carnot")
         status.menu = makeMenu()
@@ -544,7 +547,13 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
     }
 
     @objc func pickFromMenu(_ item: NSMenuItem) {
-        if let payload = item.representedObject as? [String: Any] { _ = server.send(payload) }
+        if let payload = item.representedObject as? [String: Any] {
+            _ = server.send(payload)
+            // turning computer use on is the moment to ask for the permission it needs
+            if payload["type"] as? String == "computer_set", payload["mode"] as? String != "off", !AXIsProcessTrusted() {
+                _ = AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary)
+            }
+        }
         if item.representedObject as? String == "settings" { openSettings() }
         if item.representedObject as? String == "schedules" { openSchedules() }
     }
@@ -584,6 +593,12 @@ if cli == ["--enable-login"] {  // build.sh: register without starting anything
 }
 signal(SIGPIPE, SIG_IGN)  // writing to a server that just died is an error, not fatal
 let app = NSApplication.shared
+if cli == ["--computer-serve"] {  // testing: only the computer-use socket, no window and no service
+    let cu = ComputerUse(notify: { print("notice \($0)") })
+    cu.start()
+    app.setActivationPolicy(.accessory)
+    app.run()
+}
 let delegate = App(serverArgs: cli.isEmpty ? defaultArgs : cli)
 app.delegate = delegate
 app.setActivationPolicy(.accessory)
