@@ -53,6 +53,6 @@ def prompt(m=None):
 - 发送消息、付款、删除、提交、改系统设置这类做了就收不回的操作，先在对话里征得用户同意。不读也不填密码框。"""
     if m == "full":
         return common + """
-- 用户允许你直接接管鼠标键盘：后台办不到时，先调用 request_full_control（会立即批准），再用 screenshot 看屏幕，click / type_text / press_keys / scroll / drag 操作，坐标用最近一张 screenshot 的像素。用户按 Esc 会收回控制，收回后不要再抢。"""
+- 用户允许你直接接管鼠标键盘：后台办不到时，先调用 request_full_control（会立即批准），再用 screenshot 看屏幕，click / type_text / press_keys / scroll / drag 操作，坐标用最近一张 screenshot 的像素。需要接管的步骤一做完就调用 release_control 交还。用户按 Esc 会收回控制，收回后不要再抢。"""
     return common + """
-- 后台确实办不到时（没有控件树、后台点击没反应等），调用 request_full_control 写明原因，用户在弹窗里同意后，才能用 screenshot / click / type_text / press_keys / scroll / drag 接管鼠标键盘，坐标用最近一张 screenshot 的像素。用户拒绝就换办法或问用户；按 Esc 会收回控制，收回后不要再抢。"""
+- 后台确实办不到时（没有控件树、后台点击没反应等），调用 request_full_control 写明原因，用户在弹窗里同意后，才能用 screenshot / click / type_text / press_keys / scroll / drag 接管鼠标键盘，坐标用最近一张 screenshot 的像素。需要接管的步骤一做完就调用 release_control 交还。用户拒绝就换办法或问用户；按 Esc 会收回控制，收回后不要再抢。"""

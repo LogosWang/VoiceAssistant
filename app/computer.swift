@@ -69,6 +69,9 @@ final class ComputerUse {
         }
         let line = buf.prefix(upTo: buf.firstIndex(of: 10)!)
         var reply: [String: Any]
+        if let req = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any], req["op"] as? String == "hold" {
+            return hold(c, req["grant"] as? String)
+        }
         if let req = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any] {
             do { reply = try handle(req) } catch let f as Failure { reply = ["ok": false, "error": f.text] } catch {
                 reply = ["ok": false, "error": "\(error.localizedDescription)"]
@@ -84,6 +87,19 @@ final class ComputerUse {
                 off += n
             }
         }
+    }
+
+    /// The tool server keeps this connection open while it holds a takeover. It closes when the
+    /// task ends, whatever way it ends, and the mouse and keyboard come back to you then.
+    private func hold(_ c: Int32, _ token: String?) {
+        lock.lock(); let valid = token != nil && token == grant; lock.unlock()
+        _ = (valid ? "ok\n" : "no\n").withCString { write(c, $0, strlen($0)) }
+        guard valid else { return }
+        var b = [UInt8](repeating: 0, count: 256)
+        while read(c, &b, b.count) > 0 {}
+        lock.lock()
+        if grant == token { endGrant("任务结束，已交还鼠标键盘") }
+        lock.unlock()
     }
 
     // MARK: requests
@@ -105,6 +121,11 @@ final class ComputerUse {
         }
         guard m != "off" else { throw Failure("用户已经关掉了计算机使用") }
         if op == "grant" { return try requestGrant(r["reason"] as? String ?? "", full: m == "full") }
+        if op == "release" {
+            lock.lock(); defer { lock.unlock() }
+            if let t = r["grant"] as? String, t == grant { endGrant("已交还鼠标键盘") }
+            return ok("已交还鼠标键盘")
+        }
         if Self.fullOps.contains(op) { try checkGrant(r["grant"] as? String, full: m == "full") }
         switch op {
         case "apps": return ok(apps())

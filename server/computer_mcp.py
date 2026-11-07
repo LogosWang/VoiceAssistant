@@ -6,8 +6,9 @@ import os
 import socket
 import sys
 
-SOCK = os.environ.get("CARNOT_COMPUTER_SOCK") or os.path.join(os.path.expanduser(os.environ.get("CARNOT_HOME", "~/.carnot")), "computer.sock")
-FILE = os.path.join(os.path.dirname(SOCK), "computer.json")
+HOME = os.path.expanduser(os.environ.get("CARNOT_HOME", "~/.carnot"))
+SOCK = os.environ.get("CARNOT_COMPUTER_SOCK") or os.path.join(HOME, "computer.sock")
+FILE = os.path.join(HOME, "computer.json")
 
 S, I, B, A = {"type": "string"}, {"type": "integer"}, {"type": "boolean"}, {"type": "number"}
 
@@ -36,6 +37,7 @@ BACKGROUND = [
          {"window": I, "x": A, "y": A, "button": {"type": "string", "enum": ["left", "right"]}, "double": B}, ["window", "x", "y"]),
     tool("request_full_control", "后台办不到时，请求接管鼠标和键盘。会弹窗问用户，写清原因。批准后才能用 screenshot、click 等工具。",
          {"reason": S}, ["reason"]),
+    tool("release_control", "交还鼠标和键盘。接管的步骤一做完就调用，不要等整个任务结束。"),
 ]
 FULL = [
     tool("screenshot", "截整个屏幕（接管后）。display 是第几块屏幕，默认主屏。", {"display": I}),
@@ -50,10 +52,11 @@ FULL = [
 ]
 OPS = {"list_apps": "apps", "list_windows": "windows", "capture_window": "capture", "read_ui": "ui", "press": "press",
        "set_text": "set", "choose_menu": "menu", "app_keys": "app_keys", "click_in_window": "wclick",
-       "request_full_control": "grant", "screenshot": "screen", "click": "click", "move_mouse": "move", "drag": "drag",
+       "request_full_control": "grant", "release_control": "release", "screenshot": "screen", "click": "click", "move_mouse": "move", "drag": "drag",
        "scroll": "scroll", "type_text": "type", "press_keys": "key", "activate_app": "activate"}
 FULL_NAMES = {t["name"] for t in FULL}
 grant = None
+lease = None  # open while we hold a takeover; when this process ends it closes and the app takes it back
 
 
 def mode():
@@ -85,8 +88,35 @@ def ask_app(req, wait):
         return {"ok": False, "error": "Carnot 应用没有回应"}
 
 
+def hold(token):
+    global lease
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        s.connect(SOCK)
+        s.sendall(json.dumps({"op": "hold", "grant": token}).encode() + b"\n")
+        if s.recv(8).startswith(b"ok"):
+            lease = s
+            return
+    except OSError:
+        pass
+    s.close()
+
+
+def release():
+    global grant, lease
+    if lease:
+        lease.close()
+    grant = lease = None
+
+
 def call(name, args):
     global grant
+    if name == "release_control":
+        if not grant:
+            return {"ok": True, "text": "现在没有接管"}
+        r = ask_app({"op": "release", "grant": grant}, 10)
+        release()
+        return r
     if name not in OPS:
         return {"ok": False, "error": f"没有工具 {name}"}
     if name in FULL_NAMES and not grant:
@@ -96,12 +126,16 @@ def call(name, args):
         if not r.get("ok"):
             return r
         grant = r.get("grant")
+        hold(grant)
     req = {**args, "op": OPS[name], "grant": grant}
     r = ask_app(req, 150 if name == "request_full_control" else 60)
     if name == "request_full_control" and r.get("ok"):
-        grant = r.get("grant")
+        if r.get("grant") != grant:
+            release()
+            grant = r.get("grant")
+            hold(grant)
     elif name in FULL_NAMES and not r.get("ok") and "request_full_control" in (r.get("error") or ""):
-        grant = None  # taken back with Esc, or timed out
+        release()  # taken back with Esc, or timed out
     return r
 
 
