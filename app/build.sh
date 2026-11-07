@@ -7,7 +7,7 @@ APP="${CARNOT_APP_DIR:-/Applications}/Carnot.app"
 SUPPORT="${CARNOT_SUPPORT_DIR:-$HOME/Library/Application Support/Carnot}"
 BUILD="$(mktemp -d)/Carnot.app"
 mkdir -p "$BUILD/Contents/MacOS" "$BUILD/Contents/Resources"
-swiftc -O -o "$BUILD/Contents/MacOS/Carnot" main.swift
+swiftc -O -o "$BUILD/Contents/MacOS/Carnot" main.swift computer.swift
 cp Info.plist "$BUILD/Contents/Info.plist"
 plutil -replace CarnotServerDir -string "$SERVER" "$BUILD/Contents/Info.plist"
 cp -R index.html settings.html art "$BUILD/Contents/Resources/"

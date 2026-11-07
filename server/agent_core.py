@@ -10,6 +10,7 @@ import time
 
 import attachments
 import compat
+import computer
 import model_choice
 import providers
 import shared
@@ -144,6 +145,10 @@ class Agent:
                 cmd += ["-c", f'model="{model}"']
             if effort:
                 cmd += ["-c", f'model_reasoning_effort="{effort}"']
+            if computer.mode() != "off":
+                spec = computer.server_spec()
+                cmd += ["-c", "mcp_servers.carnot_computer.command=" + json.dumps(spec["command"]),
+                        "-c", "mcp_servers.carnot_computer.args=" + json.dumps(spec["args"])]
             if mode == "bypassPermissions":
                 cmd.append("--dangerously-bypass-approvals-and-sandbox")
             else:  # -c, because a resumed session takes no --sandbox or --add-dir
@@ -160,15 +165,23 @@ class Agent:
             cmd += ["--approval-mode", {"plan": "plan", "bypassPermissions": "yolo"}.get(mode, "auto_edit")]
             cmd += ["--include-directories", ",".join(dirs)]
             return cmd + (["--resume", sid] if sid else [])
-        system = "\n\n".join(s for s in (self.system, shared.memory_prompt()) if s)
+        cu = computer.mode()
+        system = "\n\n".join(s for s in (self.system, shared.memory_prompt(), computer.prompt(cu)) if s)
         # Claude Code's own per-project memory would split what's remembered
         cmd = [cli, "-p", "--output-format", "stream-json", "--verbose", "--include-partial-messages",
                "--permission-mode", mode, *self._system_flag(system),
                "--settings", json.dumps({"autoMemoryEnabled": False})]
         # these die with the session; the shared list is schedules.py, as the system prompt says
         cmd.append("--disallowedTools=CronCreate,CronDelete,CronList,ScheduleWakeup")
+        allowed = []
         if self.may_schedule and mode in ("auto", "acceptEdits"):
-            cmd.append(f"--allowedTools=Bash({shared.schedules_tool()} schedule-*)")
+            allowed.append(f"Bash({shared.schedules_tool()} schedule-*)")
+        if cu != "off":
+            cmd += ["--mcp-config", json.dumps({"mcpServers": {computer.SERVER: computer.server_spec()}})]
+            if mode in ("auto", "acceptEdits"):  # turned on by the user; taking the mouse still asks
+                allowed.append("mcp__" + computer.SERVER)
+        if allowed:
+            cmd.append("--allowedTools=" + ",".join(allowed))
         if model:
             cmd += ["--model", model]
         if effort:
@@ -199,6 +212,8 @@ class Agent:
                 return json.dumps({"type": "user", "message": {"role": "user", "content": text}}, ensure_ascii=False) + "\n"
             return text
         parts = [shared.instructions_prompt(), shared.memory_prompt()]
+        if providers.PROVIDERS[self.provider]["engine"] == "codex":  # gemini has no flag for an MCP server
+            parts.append(computer.prompt())
         if not self.session and self.system:
             parts.insert(0, self.system)
         return "\n\n".join(p for p in parts if p) + f"\n\n# 用户的消息\n{text}"

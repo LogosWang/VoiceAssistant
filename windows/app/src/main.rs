@@ -3,6 +3,8 @@
 // the server reports over stdout ("@event {json}" lines, see events.py) and the rest goes to the log.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod computer;
+
 use serde_json::{json, Value};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
@@ -887,6 +889,12 @@ fn make_main_window(app: &AppHandle) -> tauri::Result<()> {
 }
 
 fn main() {
+    if std::env::args().any(|a| a == "--computer-serve") { // testing: only computer use, no window and no service
+        computer::start(carnot_home(), Box::new(|s| println!("notice {s}")));
+        loop {
+            std::thread::park();
+        }
+    }
     let mut builder = tauri::Builder::default();
     // One copy per home folder: a test with a home of its own runs beside the real one and leaves it alone
     if std::env::var_os("CARNOT_HOME").is_none() {
@@ -913,6 +921,8 @@ fn main() {
             let server = Arc::new(Server::new(find_server_dir(&handle)));
             app.manage(Carnot { server: server.clone(), ui: Mutex::new(Ui::default()), last_other_window: AtomicIsize::new(0) });
             make_main_window(&handle)?;
+            let said = handle.clone();
+            computer::start(carnot_home(), Box::new(move |s| send(&said, &s)));
 
             if read_state()["login_set"].as_bool() != Some(true) { // on by default, once; after that it's the user's
                 let _ = handle.autolaunch().enable();
