@@ -312,7 +312,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         root.addSubview(handle)
         panel.contentView = root
         placeOnScreen()
-        panel.orderFrontRegardless()
+        if !UserDefaults.standard.bool(forKey: "hideFloating") { panel.orderFrontRegardless() }
     }
 
     /// Saved position if any of the character is still on a screen, else the main screen's corner.
@@ -351,7 +351,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         inputOpen = open
         panel.wantsKeyboard = open
         if open {
-            panel.orderFrontRegardless()
+            showFloating(true)
             panel.makeKey()  // the panel is non-activating: the app you're in stays frontmost
             panel.makeFirstResponder(web)
         } else if panel.isKeyWindow {
@@ -473,6 +473,7 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
             m.addItem(i)
             return i
         }
+        add("显示悬浮窗", #selector(toggleVisible)).state = panel.isVisible ? .on : .off
         add("输入文字…", #selector(openInput))
         let conversations = NSMenuItem(title: "会话", action: nil, keyEquivalent: "")
         conversations.submenu = sessionsMenu()
@@ -480,7 +481,6 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
         add("连接设置…", #selector(openSettings))
         add("定时任务…", #selector(openSchedules))
         add("远程机器人…", #selector(openBots))
-        add("显示 / 隐藏人物", #selector(toggleVisible))
         add("重启语音服务", #selector(restartServer))
         add("开机自启", #selector(toggleLogin)).state = SMAppService.mainApp.status == .enabled ? .on : .off
         m.addItem(.separator())
@@ -572,8 +572,11 @@ final class App: NSObject, NSApplicationDelegate, WKNavigationDelegate, WKScript
     }
 
     @objc func openInput() { setInput(true) }
-    @objc func toggleVisible() {
-        panel.isVisible ? panel.orderOut(nil) : panel.orderFrontRegardless()
+    @objc func toggleVisible() { showFloating(!panel.isVisible) }
+    /// Remembered, so a hidden window stays hidden after a restart. Carnot still listens while it's hidden.
+    func showFloating(_ show: Bool) {
+        UserDefaults.standard.set(!show, forKey: "hideFloating")
+        if show { panel.orderFrontRegardless() } else { if inputOpen { setInput(false) }; panel.orderOut(nil) }
     }
     @objc func restartServer() { server.restart() }
     @objc func toggleLogin() {

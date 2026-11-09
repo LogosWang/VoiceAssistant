@@ -492,6 +492,9 @@ fn set_input(app: &AppHandle, open: bool, give_back: bool) {
     }
     let Some(window) = main_window(app) else { return };
     if open {
+        if !window.is_visible().unwrap_or(true) {
+            show_floating(app, true); // typing to her brings her back
+        }
         if let Some(hwnd) = hwnd_of(&window) {
             apply_styles(hwnd, true);
         }
@@ -505,6 +508,22 @@ fn set_input(app: &AppHandle, open: bool, give_back: bool) {
         }
     }
     send(app, &json!({"type": "input", "open": open}).to_string());
+}
+
+/// Remembered, so a hidden window stays hidden after a restart. Carnot still listens while it's hidden.
+fn show_floating(app: &AppHandle, show: bool) {
+    write_state("hide_floating", json!(!show));
+    if let Some(w) = main_window(app) {
+        if show {
+            let _ = w.show();
+        } else {
+            if state(app).ui.lock().unwrap().input_open {
+                set_input(app, false, true);
+            }
+            let _ = w.hide();
+        }
+    }
+    refresh_tray(app);
 }
 
 fn attach(app: &AppHandle, paths: Vec<String>) {
@@ -638,13 +657,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         conversations.append(&one)?;
     }
     let login = app.autolaunch().is_enabled().unwrap_or(false);
+    let shown = main_window(app).and_then(|w| w.is_visible().ok()).unwrap_or(true);
     MenuBuilder::new(app)
+        .item(&CheckMenuItem::with_id(app, "toggle", "显示悬浮窗", true, shown, None::<&str>)?)
         .text("input", "输入文字…")
         .item(&conversations)
         .text("settings", "连接设置…")
         .text("schedules", "定时任务…")
         .text("bots", "远程机器人…")
-        .text("toggle", "显示 / 隐藏人物")
         .text("restart", "重启语音服务")
         .item(&CheckMenuItem::with_id(app, "login", "开机自启", true, login, None::<&str>)?)
         .separator()
@@ -707,9 +727,8 @@ fn on_menu(app: &AppHandle, id: &str) {
         "attach_files" => pick(app, false),
         "attach_folder" => pick(app, true),
         "toggle" => {
-            if let Some(w) = main_window(app) {
-                let _ = if w.is_visible().unwrap_or(true) { w.hide() } else { w.show() };
-            }
+            let shown = main_window(app).and_then(|w| w.is_visible().ok()).unwrap_or(true);
+            show_floating(app, !shown);
         }
         "restart" => {
             let (server, app) = (carnot.server.clone(), app.clone());
@@ -850,6 +869,7 @@ fn make_main_window(app: &AppHandle) -> tauri::Result<()> {
         .always_on_top(true)
         .skip_taskbar(true)
         .focused(false) // shown without activating: the app you're in stays frontmost
+        .visible(read_state()["hide_floating"].as_bool() != Some(true)) // hidden last time: stays hidden
         .initialization_script(BRIDGE)
         .initialization_script(HANDLE)
         .on_page_load(move |_, payload| {

@@ -238,6 +238,8 @@ New-Item -ItemType Directory "$scratch\home" | Out-Null
 New-Item -ItemType Directory -Force $Held | Out-Null
 foreach ($name in $HeldKeys.Keys) { cmd /c "reg export $($HeldKeys[$name]) `"$Held\$name.reg`" /y >nul 2>&1" }
 foreach ($name in $HeldLinks.Keys) { if (Test-Path $HeldLinks[$name]) { Copy-Item $HeldLinks[$name] "$Held\$name.lnk" } }
+# A copy of Carnot already running here must still be running afterwards, whatever the test did
+$runningReal = @(Get-Process carnot -ErrorAction SilentlyContinue | Where-Object { $_.Path -and -not $_.Path.StartsWith($scratch, [StringComparison]::OrdinalIgnoreCase) })
 $saved = $env:USERPROFILE, $env:CARNOT_HOME
 $env:USERPROFILE = "$scratch\home"; $env:CARNOT_HOME = "$scratch\home\.carnot"; $env:CARNOT_INSTALL_TEST = '1'
 $setup = Start-Process $out -ArgumentList '/S', "/D=$scratch\app" -PassThru
@@ -258,5 +260,8 @@ foreach ($wait in 1..30) {  # the uninstaller carries on from a copy of itself
 $env:USERPROFILE, $env:CARNOT_HOME = $saved
 Remove-Item Env:\CARNOT_INSTALL_TEST
 Restore-RealInstall
+foreach ($p in $runningReal) {
+    if (-not (Get-Process -Id $p.Id -ErrorAction SilentlyContinue)) { Write-Warning "the test install closed Carnot ($($p.Path)): starting it again"; Start-Process $p.Path }
+}
 if ($failed) { Remove-Item $out -ErrorAction SilentlyContinue; throw "$failed in the test install: this build is bad, run the script again" }
 Get-Item $out | ForEach-Object { '{0}  {1:N0} MB' -f $_.FullName, ($_.Length / 1MB) }
